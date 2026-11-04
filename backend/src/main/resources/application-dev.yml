@@ -1,0 +1,8 @@
+# Local development only. Never use these values in production.
+spring:
+  datasource:
+    password: ${DB_PASSWORD:roommate-dev}
+
+app:
+  jwt:
+    secret: ${JWT_SECRET:dev-only-secret-dev-only-secret-dev-only-secret}
