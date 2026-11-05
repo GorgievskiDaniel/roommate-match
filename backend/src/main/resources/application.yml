@@ -9,6 +9,9 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+    properties:
+      hibernate:
+        default_batch_fetch_size: 50
   flyway:
     enabled: true
   servlet:
@@ -17,6 +20,17 @@ spring:
       max-request-size: 55MB
 
 app:
+  matching:
+    apartment:
+      habits: 0.35
+      rent: 0.25
+      location: 0.25
+      hobbies: 0.15
+    dorm:
+      habits: 0.70
+      hobbies: 0.30
+    # Multiplies the score of two students who want different room types in a dorm where that matters.
+    different-room-type-factor: 0.5
   uploads:
     dir: ${UPLOADS_DIR:uploads}
   jwt:

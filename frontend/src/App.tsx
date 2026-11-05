@@ -4,6 +4,7 @@ import { useAuth } from './auth'
 import AuthPage from './pages/AuthPage'
 import ListingPage from './pages/ListingPage'
 import MapPage from './pages/MapPage'
+import MatchesPage from './pages/MatchesPage'
 import ProfileFormPage from './pages/ProfileFormPage'
 import ProfilePage from './pages/ProfilePage'
 
@@ -20,6 +21,7 @@ function Shell({ children }: { children: ReactNode }) {
             {user.profileCompleted && (
               <>
                 <NavLink to="/" end>Мапа</NavLink>
+                <NavLink to="/matches">Совпаѓања</NavLink>
                 <NavLink to="/listing">Мој оглас</NavLink>
                 <NavLink to="/profile">Профил</NavLink>
               </>
@@ -82,6 +84,7 @@ export default function App() {
         <Route path="/onboarding" element={<Guard need="onboarding"><ProfileFormPage /></Guard>} />
         <Route path="/profile/edit" element={<Guard need="member"><ProfileFormPage editing /></Guard>} />
         <Route path="/profile" element={<Guard need="member"><ProfilePage /></Guard>} />
+        <Route path="/matches" element={<Guard need="member"><MatchesPage /></Guard>} />
         <Route path="/listing" element={<Guard need="member"><ListingPage /></Guard>} />
         <Route path="/" element={<Guard need="member"><MapPage /></Guard>} />
         <Route path="*" element={<Navigate to="/" replace />} />

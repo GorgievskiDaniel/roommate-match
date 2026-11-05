@@ -2,6 +2,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useEffect, useMemo, useState } from 'react'
 import { MapContainer, Marker, TileLayer } from 'react-leaflet'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import MapView, { type View } from '../components/MapView'
 import PersonCard from '../components/PersonCard'
@@ -121,7 +122,10 @@ export default function MapPage() {
   const [showApartments, setShowApartments] = useState(true)
   const [showHouses, setShowHouses] = useState(true)
   const [showDorms, setShowDorms] = useState(true)
-  const [selection, setSelection] = useState<Selection | null>(null)
+  // A link from the matches page names the listing to open.
+  const [searchParams] = useSearchParams()
+  const linkedListing = Number(searchParams.get('listing')) || null
+  const [selection, setSelection] = useState<Selection | null>(linkedListing ? { kind: 'listing', id: linkedListing } : null)
   const [place, setPlace] = useState('MACEDONIA')
   const [view, setView] = useState<View>(MACEDONIA)
   // A dorm chosen from the list moves the map away from the place picked above it.
@@ -131,7 +135,15 @@ export default function MapPage() {
   useEffect(() => {
     let active = true
     api<{ listings: MapListing[]; dorms: MapDorm[] }>('/map')
-      .then((loaded) => active && setData(loaded))
+      .then((loaded) => {
+        if (!active) return
+        setData(loaded)
+        const linked = loaded.listings.find((listing) => listing.id === linkedListing)
+        if (linked) {
+          setMovedAway(true)
+          setView({ center: [linked.latitude, linked.longitude], zoom: DORM_ZOOM })
+        }
+      })
       .catch((caught: Error) => active && setError(caught.message))
     api<Reference>('/reference')
       .then((reference) => active && setAreas(reference.areas))
@@ -139,7 +151,7 @@ export default function MapPage() {
     return () => {
       active = false
     }
-  }, [])
+  }, [linkedListing])
 
   function choosePlace(code: string) {
     setPlace(code)

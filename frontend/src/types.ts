@@ -136,6 +136,22 @@ export interface DormDetail {
   seekers: { profile: ProfileSummary; roomOption: string | null }[]
 }
 
+export interface Match {
+  profile: ProfileSummary
+  score: {
+    total: number
+    habits: number
+    hobbies: number
+    rent: number | null
+    location: number | null
+    differentRoomType: boolean
+  }
+  situation: Situation | null
+  roomOption: string | null
+  areas: string[]
+  listingId: number | null
+}
+
 export type WantedPlace = PropertyType | 'BOTH' | 'DORM'
 
 /** The single questionnaire answer behind a housing type and its property types. */

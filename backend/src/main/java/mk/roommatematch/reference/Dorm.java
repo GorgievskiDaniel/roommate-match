@@ -25,6 +25,8 @@ public class Dorm {
 
     private Double longitude;
 
+    private boolean roomTypeAffectsMatch;
+
     @OneToMany
     @JoinColumn(name = "dorm_id")
     @OrderBy("id")
@@ -36,6 +38,10 @@ public class Dorm {
     private List<DormBlock> blocks = new ArrayList<>();
 
     protected Dorm() {
+    }
+
+    public boolean isRoomTypeAffectsMatch() {
+        return roomTypeAffectsMatch;
     }
 
     public List<DormBlock> getBlocks() {
