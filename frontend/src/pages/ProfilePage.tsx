@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
-import { LABELS, type Profile, type Reference } from '../types'
+import { LABELS, wantedPlace, type Profile, type Reference } from '../types'
 
 const yesNo = (value: boolean) => (value ? 'Да' : 'Не')
 
@@ -51,13 +51,19 @@ export default function ProfilePage() {
         <section className="card">
           <h2>Што бара</h2>
           <dl>
-            <Row label="Каде" value={LABELS.housingType[p.housingType]} />
+            <Row label="Каде" value={LABELS.wantedPlace[wantedPlace(p.housingType, p.propertyTypes) ?? 'BOTH']} />
             {p.housingType === 'DORM' && p.dormId !== null && <Row label="Дом" value={nameOf(r.dorms, p.dormId)} />}
+            {p.dormRoomOptionId !== null && (
+              <Row
+                label="Соба"
+                value={nameOf(r.dorms.flatMap((d) => d.roomOptions), p.dormRoomOptionId)}
+              />
+            )}
             {p.housingType === 'APARTMENT' && p.situation && (
               <>
                 <Row label="Положба" value={LABELS.situation[p.situation]} />
                 <Row label="Кирија" value={`${p.budgetMin}–${p.budgetMax} €`} />
-                <Row label="Општини" value={r.areas.filter((a) => p.areas.includes(a.code)).map((a) => a.name).join(', ')} />
+                <Row label="Локации" value={r.areas.filter((a) => p.areas.includes(a.code)).map((a) => a.name).join(', ')} />
               </>
             )}
           </dl>

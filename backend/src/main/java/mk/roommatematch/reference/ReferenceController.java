@@ -13,10 +13,13 @@ public class ReferenceController {
     record Option(Long id, String name) {
     }
 
-    record AreaOption(Area code, String name) {
+    record DormOption(Long id, String name, List<Option> roomOptions) {
     }
 
-    record ReferenceResponse(List<Option> dorms, List<Option> hobbies, List<AreaOption> areas) {
+    record AreaOption(Area code, String name, boolean skopje, double latitude, double longitude) {
+    }
+
+    record ReferenceResponse(List<DormOption> dorms, List<Option> hobbies, List<AreaOption> areas) {
     }
 
     private final DormRepository dorms;
@@ -30,8 +33,13 @@ public class ReferenceController {
     @GetMapping("/api/reference")
     ReferenceResponse reference() {
         return new ReferenceResponse(
-                dorms.findAll(Sort.by("id")).stream().map(d -> new Option(d.getId(), d.getName())).toList(),
+                dorms.findAllWithRoomOptions().stream().map(ReferenceController::toOption).toList(),
                 hobbies.findAll(Sort.by("id")).stream().map(h -> new Option(h.getId(), h.getName())).toList(),
-                Arrays.stream(Area.values()).map(a -> new AreaOption(a, a.getLabel())).toList());
+                Arrays.stream(Area.values()).map(a -> new AreaOption(a, a.getLabel(), a.isSkopje(), a.getLatitude(), a.getLongitude())).toList());
+    }
+
+    private static DormOption toOption(Dorm dorm) {
+        return new DormOption(dorm.getId(), dorm.getName(),
+                dorm.getRoomOptions().stream().map(o -> new Option(o.getId(), o.getName())).toList());
     }
 }

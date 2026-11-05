@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Past;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 import java.util.Set;
+import mk.roommatematch.listing.ListingDtos.PropertyType;
 import mk.roommatematch.profile.ProfileEnums.Gender;
 import mk.roommatematch.profile.ProfileEnums.GenderPreference;
 import mk.roommatematch.profile.ProfileEnums.GuestsFrequency;
@@ -40,11 +41,12 @@ public final class ProfileDtos {
             @Size(max = 500, message = "Описот може да има најмногу 500 знаци.")
             String bio,
 
-            @NotNull(message = "Изберете дали барате стан или дом.")
+            @NotNull(message = "Изберете каде барате цимер.")
             HousingType housingType,
 
             Situation situation,
             Long dormId,
+            Long dormRoomOptionId,
 
             @Min(value = 0, message = "Буџетот не може да е негативен.")
             Integer budgetMin,
@@ -53,6 +55,7 @@ public final class ProfileDtos {
             Integer budgetMax,
 
             Set<Area> areas,
+            Set<PropertyType> propertyTypes,
 
             @NotNull(message = "Одговорете дали пушите.")
             Boolean smoker,
@@ -100,9 +103,11 @@ public final class ProfileDtos {
             HousingType housingType,
             Situation situation,
             Long dormId,
+            Long dormRoomOptionId,
             Integer budgetMin,
             Integer budgetMax,
             Set<Area> areas,
+            Set<PropertyType> propertyTypes,
             boolean smoker,
             boolean hasPets,
             GuestsFrequency guestsFrequency,
@@ -113,5 +118,22 @@ public final class ProfileDtos {
             boolean acceptsPets,
             GenderPreference roommateGenderPreference,
             Set<Long> hobbyIds) {
+    }
+
+    /** What other students may see about someone: no e-mail and no exact birth date. */
+    public record ProfileSummary(
+            Long userId,
+            String firstName,
+            Gender gender,
+            int age,
+            String faculty,
+            String bio,
+            boolean smoker,
+            boolean hasPets,
+            GuestsFrequency guestsFrequency,
+            int tidiness,
+            SleepSchedule sleepSchedule,
+            int quietNeed,
+            Set<String> hobbies) {
     }
 }

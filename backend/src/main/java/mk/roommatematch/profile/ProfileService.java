@@ -6,13 +6,18 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.stream.Collectors;
 import mk.roommatematch.common.FieldValidationException;
+import mk.roommatematch.listing.ListingRepository;
 import mk.roommatematch.profile.ProfileDtos.ProfileRequest;
 import mk.roommatematch.profile.ProfileDtos.ProfileResponse;
+import mk.roommatematch.profile.ProfileDtos.ProfileSummary;
 import mk.roommatematch.profile.ProfileEnums.HousingType;
+import mk.roommatematch.profile.ProfileEnums.Situation;
 import mk.roommatematch.reference.Dorm;
 import mk.roommatematch.reference.DormRepository;
+import mk.roommatematch.reference.DormRoomOption;
 import mk.roommatematch.reference.Hobby;
 import mk.roommatematch.reference.HobbyRepository;
 import org.springframework.http.HttpStatus;
@@ -28,11 +33,14 @@ public class ProfileService {
     private final ProfileRepository profiles;
     private final DormRepository dorms;
     private final HobbyRepository hobbies;
+    private final ListingRepository listings;
 
-    public ProfileService(ProfileRepository profiles, DormRepository dorms, HobbyRepository hobbies) {
+    public ProfileService(ProfileRepository profiles, DormRepository dorms, HobbyRepository hobbies,
+                          ListingRepository listings) {
         this.profiles = profiles;
         this.dorms = dorms;
         this.hobbies = hobbies;
+        this.listings = listings;
     }
 
     @Transactional(readOnly = true)
@@ -49,10 +57,17 @@ public class ProfileService {
             errors.put("birthDate", "Мора да имате најмалку " + MINIMUM_AGE + " години.");
         }
         Dorm dorm = null;
+        DormRoomOption roomOption = null;
         if (request.housingType() == HousingType.DORM) {
             dorm = findDorm(request.dormId(), errors);
+            roomOption = dorm == null ? null : findRoomOption(dorm, request.dormRoomOptionId(), errors);
         } else {
             validateApartment(request, errors);
+        }
+        boolean stillHasPlace = request.housingType() == HousingType.APARTMENT
+                && request.situation() == Situation.HAS_PLACE;
+        if (!stillHasPlace && listings.findByResident(userId).isPresent()) {
+            errors.put("housingType", "Прво избришете го или напуштете го огласот за вашиот стан.");
         }
         Set<Hobby> chosenHobbies = new HashSet<>(hobbies.findAllById(request.hobbyIds()));
         if (chosenHobbies.size() != request.hobbyIds().size()) {
@@ -62,7 +77,7 @@ public class ProfileService {
             throw new FieldValidationException(errors);
         }
         Profile profile = profiles.findById(userId).orElseGet(() -> new Profile(userId));
-        profile.update(request, dorm, chosenHobbies);
+        profile.update(request, dorm, roomOption, chosenHobbies);
         return toResponse(profiles.save(profile));
     }
 
@@ -78,7 +93,28 @@ public class ProfileService {
         return dorm;
     }
 
+    /** Only some dorms have room types to choose from. */
+    private DormRoomOption findRoomOption(Dorm dorm, Long optionId, Map<String, String> errors) {
+        if (dorm.getRoomOptions().isEmpty()) {
+            return null;
+        }
+        if (optionId == null) {
+            errors.put("dormRoomOptionId", "Изберете тип на соба.");
+            return null;
+        }
+        return dorm.getRoomOptions().stream()
+                .filter(option -> option.getId().equals(optionId))
+                .findFirst()
+                .orElseGet(() -> {
+                    errors.put("dormRoomOptionId", "Избраниот тип на соба не постои во овој дом.");
+                    return null;
+                });
+    }
+
     private void validateApartment(ProfileRequest request, Map<String, String> errors) {
+        if (request.propertyTypes() == null || request.propertyTypes().isEmpty()) {
+            errors.put("propertyTypes", "Изберете стан, куќа или и двете.");
+        }
         if (request.situation() == null) {
             errors.put("situation", "Изберете ја вашата положба.");
         }
@@ -93,7 +129,7 @@ public class ProfileService {
             errors.put("budgetMax", "Најголемиот буџет не може да е помал од најмалиот.");
         }
         if (request.areas() == null || request.areas().isEmpty()) {
-            errors.put("areas", "Изберете барем една општина.");
+            errors.put("areas", "Изберете барем една локација.");
         }
     }
 
@@ -108,9 +144,11 @@ public class ProfileService {
                 p.getHousingType(),
                 p.getSituation(),
                 p.getDorm() == null ? null : p.getDorm().getId(),
+                p.getDormRoomOption() == null ? null : p.getDormRoomOption().getId(),
                 p.getBudgetMin(),
                 p.getBudgetMax(),
                 Set.copyOf(p.getAreas()),
+                Set.copyOf(p.getPropertyTypes()),
                 p.isSmoker(),
                 p.isHasPets(),
                 p.getGuestsFrequency(),
@@ -121,6 +159,23 @@ public class ProfileService {
                 p.isAcceptsPets(),
                 p.getRoommateGenderPreference(),
                 p.getHobbies().stream().map(Hobby::getId).collect(Collectors.toSet()));
+    }
+
+    public static ProfileSummary toSummary(Profile p) {
+        return new ProfileSummary(
+                p.getUserId(),
+                p.getFirstName(),
+                p.getGender(),
+                ageOf(p.getBirthDate()),
+                p.getFaculty(),
+                p.getBio(),
+                p.isSmoker(),
+                p.isHasPets(),
+                p.getGuestsFrequency(),
+                p.getTidiness(),
+                p.getSleepSchedule(),
+                p.getQuietNeed(),
+                p.getHobbies().stream().map(Hobby::getName).collect(Collectors.toCollection(TreeSet::new)));
     }
 
     private static int ageOf(LocalDate birthDate) {

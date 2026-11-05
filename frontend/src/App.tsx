@@ -1,7 +1,9 @@
 import type { ReactNode } from 'react'
-import { Link, Navigate, Route, Routes } from 'react-router-dom'
+import { Link, Navigate, NavLink, Route, Routes } from 'react-router-dom'
 import { useAuth } from './auth'
 import AuthPage from './pages/AuthPage'
+import ListingPage from './pages/ListingPage'
+import MapPage from './pages/MapPage'
 import ProfileFormPage from './pages/ProfileFormPage'
 import ProfilePage from './pages/ProfilePage'
 
@@ -14,9 +16,18 @@ function Shell({ children }: { children: ReactNode }) {
           Roommate<span>Match</span>
         </Link>
         {user && (
-          <button type="button" className="link-button" onClick={logout}>
-            Одјави се
-          </button>
+          <nav className="nav">
+            {user.profileCompleted && (
+              <>
+                <NavLink to="/" end>Мапа</NavLink>
+                <NavLink to="/listing">Мој оглас</NavLink>
+                <NavLink to="/profile">Профил</NavLink>
+              </>
+            )}
+            <button type="button" className="link-button" onClick={logout}>
+              Одјави се
+            </button>
+          </nav>
         )}
       </header>
       <main className="page">{children}</main>
@@ -70,7 +81,9 @@ export default function App() {
         <Route path="/register" element={<Guard need="guest"><AuthPage mode="register" /></Guard>} />
         <Route path="/onboarding" element={<Guard need="onboarding"><ProfileFormPage /></Guard>} />
         <Route path="/profile/edit" element={<Guard need="member"><ProfileFormPage editing /></Guard>} />
-        <Route path="/" element={<Guard need="member"><ProfilePage /></Guard>} />
+        <Route path="/profile" element={<Guard need="member"><ProfilePage /></Guard>} />
+        <Route path="/listing" element={<Guard need="member"><ListingPage /></Guard>} />
+        <Route path="/" element={<Guard need="member"><MapPage /></Guard>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </Shell>

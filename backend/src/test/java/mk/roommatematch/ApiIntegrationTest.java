@@ -95,7 +95,7 @@ class ApiIntegrationTest {
         mvc.perform(get("/api/reference").header("Authorization", "Bearer " + token))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.dorms.length()").value(8))
-                .andExpect(jsonPath("$.areas.length()").value(10));
+                .andExpect(jsonPath("$.areas.length()").value(43));
     }
 
     @Test
@@ -120,14 +120,36 @@ class ApiIntegrationTest {
 
         Map<String, Object> dorm = apartmentProfile();
         dorm.put("housingType", "DORM");
-        dorm.put("dormId", 1);
+        dorm.put("dormId", 3);
 
         send(put("/api/profile/me"), token, dorm)
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.dormId").value(1))
+                .andExpect(jsonPath("$.dormId").value(3))
                 .andExpect(jsonPath("$.situation").isEmpty())
                 .andExpect(jsonPath("$.budgetMin").isEmpty())
-                .andExpect(jsonPath("$.areas").isEmpty());
+                .andExpect(jsonPath("$.areas").isEmpty())
+                .andExpect(jsonPath("$.propertyTypes").isEmpty());
+    }
+
+    @Test
+    void apartmentProfileKeepsTheChosenPropertyTypes() throws Exception {
+        String token = register(uniqueEmail(), "lozinka123");
+
+        send(put("/api/profile/me"), token, apartmentProfile())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.propertyTypes.length()").value(1))
+                .andExpect(jsonPath("$.propertyTypes[0]").value("HOUSE"));
+    }
+
+    @Test
+    void apartmentProfileRequiresAPropertyType() throws Exception {
+        String token = register(uniqueEmail(), "lozinka123");
+        Map<String, Object> profile = apartmentProfile();
+        profile.put("propertyTypes", List.of());
+
+        send(put("/api/profile/me"), token, profile)
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors", hasKey("propertyTypes")));
     }
 
     @Test
@@ -197,6 +219,7 @@ class ApiIntegrationTest {
         profile.put("budgetMin", 100);
         profile.put("budgetMax", 200);
         profile.put("areas", List.of("AERODROM", "KARPOSH"));
+        profile.put("propertyTypes", List.of("HOUSE"));
         profile.put("smoker", false);
         profile.put("hasPets", false);
         profile.put("guestsFrequency", "RARELY");

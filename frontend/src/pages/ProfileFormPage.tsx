@@ -2,15 +2,15 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, ApiError } from '../api'
 import { useAuth } from '../auth'
-import { LABELS, type Profile, type ProfileRequest, type Reference } from '../types'
+import { LABELS, wantedPlace, type Profile, type ProfileRequest, type Reference, type WantedPlace } from '../types'
 
 type Form = { [K in keyof ProfileRequest]: ProfileRequest[K] | null } & { budgetMinText: string; budgetMaxText: string }
 type Errors = Record<string, string>
 
 const EMPTY: Form = {
   firstName: '', gender: null, birthDate: '', faculty: '', bio: '',
-  housingType: null, situation: null, dormId: null, budgetMin: null, budgetMax: null,
-  budgetMinText: '', budgetMaxText: '', areas: [],
+  housingType: null, situation: null, dormId: null, dormRoomOptionId: null, budgetMin: null, budgetMax: null,
+  budgetMinText: '', budgetMaxText: '', areas: [], propertyTypes: [],
   smoker: null, hasPets: null, guestsFrequency: null, tidiness: null, sleepSchedule: null, quietNeed: null,
   acceptsSmoker: null, acceptsPets: null, roommateGenderPreference: null, hobbyIds: [],
 }
@@ -19,12 +19,12 @@ const STEPS = ['За тебе', 'Што бараш', 'Навики', 'Цимер
 
 const STEP_OF_FIELD: Record<string, number> = {
   firstName: 0, gender: 0, birthDate: 0, faculty: 0, bio: 0,
-  housingType: 1, situation: 1, dormId: 1, budgetMin: 1, budgetMax: 1, areas: 1,
+  housingType: 1, propertyTypes: 1, situation: 1, dormId: 1, dormRoomOptionId: 1, budgetMin: 1, budgetMax: 1, areas: 1,
   smoker: 2, hasPets: 2, guestsFrequency: 2, tidiness: 2, sleepSchedule: 2, quietNeed: 2,
   acceptsSmoker: 3, acceptsPets: 3, roommateGenderPreference: 3, hobbyIds: 3,
 }
 
-function validateStep(step: number, f: Form): Errors {
+function validateStep(step: number, f: Form, reference: Reference): Errors {
   const e: Errors = {}
   const need = (key: keyof Form, message: string) => {
     if (f[key] === null || f[key] === '') e[key] = message
@@ -36,8 +36,13 @@ function validateStep(step: number, f: Form): Errors {
     need('faculty', 'Внесете факултет.')
   }
   if (step === 1) {
-    need('housingType', 'Изберете дали барате стан или дом.')
-    if (f.housingType === 'DORM') need('dormId', 'Изберете студентски дом.')
+    need('housingType', 'Изберете каде барате цимер.')
+    if (f.housingType === 'DORM') {
+      need('dormId', 'Изберете студентски дом.')
+      if (reference.dorms.find((d) => d.id === f.dormId)?.roomOptions.length) {
+        need('dormRoomOptionId', 'Изберете тип на соба.')
+      }
+    }
     if (f.housingType === 'APARTMENT') {
       need('situation', 'Изберете ја вашата положба.')
       if (f.budgetMinText === '') e.budgetMin = 'Внесете најмал буџет.'
@@ -45,7 +50,7 @@ function validateStep(step: number, f: Form): Errors {
       if (f.budgetMinText !== '' && f.budgetMaxText !== '' && Number(f.budgetMinText) > Number(f.budgetMaxText)) {
         e.budgetMax = 'Најголемиот буџет не може да е помал од најмалиот.'
       }
-      if (!f.areas?.length) e.areas = 'Изберете барем една општина.'
+      if (!f.areas?.length) e.areas = 'Изберете барем една локација.'
     }
   }
   if (step === 2) {
@@ -156,6 +161,7 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
           setForm({
             ...profile,
             areas: [...profile.areas],
+            propertyTypes: [...profile.propertyTypes],
             hobbyIds: [...profile.hobbyIds],
             budgetMinText: profile.budgetMin?.toString() ?? '',
             budgetMaxText: profile.budgetMax?.toString() ?? '',
@@ -173,6 +179,11 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
     setErrors(({ [key]: _removed, ...rest }) => rest)
   }
 
+  function chooseWantedPlace(value: WantedPlace) {
+    set('housingType', value === 'DORM' ? 'DORM' : 'APARTMENT')
+    set('propertyTypes', value === 'DORM' ? [] : value === 'BOTH' ? ['APARTMENT', 'HOUSE'] : [value])
+  }
+
   function toggle<T>(list: T[], value: T): T[] {
     return list.includes(value) ? list.filter((item) => item !== value) : [...list, value]
   }
@@ -180,7 +191,7 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
   async function submit(event: FormEvent) {
     event.preventDefault()
     setFormError(null)
-    const stepErrors = validateStep(step, form)
+    const stepErrors = validateStep(step, form, reference!)
     if (Object.keys(stepErrors).length > 0) {
       setErrors(stepErrors)
       return
@@ -200,13 +211,15 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
           ...rest,
           situation: apartment ? form.situation : null,
           dormId: apartment ? null : form.dormId,
+          dormRoomOptionId: apartment ? null : form.dormRoomOptionId,
           budgetMin: apartment ? Number(budgetMinText) : null,
           budgetMax: apartment ? Number(budgetMaxText) : null,
           areas: apartment ? form.areas : [],
+          propertyTypes: apartment ? form.propertyTypes : [],
         },
       })
       await refresh()
-      navigate('/')
+      navigate(editing ? '/profile' : '/')
     } catch (caught) {
       setSubmitting(false)
       if (caught instanceof ApiError) {
@@ -225,6 +238,8 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
       ? <p role="alert" className="form-error">{formError}</p>
       : <p className="muted">Се вчитува…</p>
   }
+
+  const roomOptions = reference.dorms.find((d) => d.id === form.dormId)?.roomOptions ?? []
 
   return (
     <form className="card questionnaire" onSubmit={submit} noValidate>
@@ -258,12 +273,18 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
 
       {step === 1 && (
         <>
-          <Choice name="housingType" legend="Каде бараш цимер?" value={form.housingType}
-            options={entries(LABELS.housingType)} onChange={(v) => set('housingType', v)} error={errors.housingType} />
+          <Choice name="wantedPlace" legend="Каде бараш цимер?" value={wantedPlace(form.housingType, form.propertyTypes ?? [])}
+            options={entries(LABELS.wantedPlace)} onChange={chooseWantedPlace}
+            error={errors.housingType ?? errors.propertyTypes} />
           {form.housingType === 'DORM' && (
             <Choice name="dormId" legend="Во кој дом?" value={form.dormId}
               options={reference.dorms.map((d) => ({ value: d.id, label: d.name }))}
-              onChange={(v) => set('dormId', v)} error={errors.dormId} />
+              onChange={(v) => { set('dormId', v); set('dormRoomOptionId', null) }} error={errors.dormId} />
+          )}
+          {form.housingType === 'DORM' && roomOptions.length > 0 && (
+            <Choice name="dormRoomOptionId" legend="Каков тип на соба?" value={form.dormRoomOptionId}
+              options={roomOptions.map((o) => ({ value: o.id, label: o.name }))}
+              onChange={(v) => set('dormRoomOptionId', v)} error={errors.dormRoomOptionId} />
           )}
           {form.housingType === 'APARTMENT' && (
             <>
@@ -279,8 +300,11 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
                     onChange={(e) => { set('budgetMaxText', e.target.value); set('budgetMax', null) }} />
                 </Text>
               </div>
-              <MultiChoice legend="Во кои општини?" selected={form.areas ?? []}
-                options={reference.areas.map((a) => ({ value: a.code, label: a.name }))}
+              <MultiChoice legend="Каде бараш? Општини во Скопје" selected={form.areas ?? []}
+                options={reference.areas.filter((a) => a.skopje).map((a) => ({ value: a.code, label: a.name }))}
+                onToggle={(v) => set('areas', toggle(form.areas ?? [], v))} />
+              <MultiChoice legend="Други градови" selected={form.areas ?? []}
+                options={reference.areas.filter((a) => !a.skopje).map((a) => ({ value: a.code, label: a.name }))}
                 onToggle={(v) => set('areas', toggle(form.areas ?? [], v))} error={errors.areas} />
             </>
           )}

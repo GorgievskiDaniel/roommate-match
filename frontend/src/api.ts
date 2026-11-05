@@ -26,16 +26,20 @@ export async function api<T>(path: string, options: { method?: string; body?: un
   const token = getToken()
   let response: Response
   try {
+    const isForm = options.body instanceof FormData
     response = await fetch(`/api${path}`, {
       method: options.method ?? 'GET',
       headers: {
-        ...(options.body !== undefined && { 'Content-Type': 'application/json' }),
+        ...(options.body !== undefined && !isForm && { 'Content-Type': 'application/json' }),
         ...(token && { Authorization: `Bearer ${token}` }),
       },
-      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      body: isForm ? (options.body as FormData) : options.body !== undefined ? JSON.stringify(options.body) : undefined,
     })
   } catch {
     throw new ApiError(0, 'Серверот не е достапен. Обидете се повторно.')
+  }
+  if (response.status === 204) {
+    return undefined as T
   }
   if (response.ok) {
     return response.json() as Promise<T>
