@@ -20,6 +20,8 @@ spring:
       max-request-size: 55MB
 
 app:
+  websocket:
+    allowed-origins: ${WS_ALLOWED_ORIGINS:http://localhost:5173}
   matching:
     apartment:
       habits: 0.35

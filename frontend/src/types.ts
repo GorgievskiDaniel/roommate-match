@@ -136,6 +136,23 @@ export interface DormDetail {
   seekers: { profile: ProfileSummary; roomOption: string | null }[]
 }
 
+export interface Conversation {
+  id: number
+  otherUserId: number
+  otherName: string
+  lastMessage: string | null
+  lastMessageAt: string | null
+  unread: number
+}
+
+export interface ChatMessage {
+  id: number
+  conversationId: number
+  senderId: number
+  body: string
+  createdAt: string
+}
+
 export interface Match {
   profile: ProfileSummary
   score: {
