@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Link, Navigate, NavLink, Route, Routes } from 'react-router-dom'
 import { useAuth } from './auth'
 import { useChat } from './chat'
+import AssistantPage from './pages/AssistantPage'
 import AuthPage from './pages/AuthPage'
 import ListingPage from './pages/ListingPage'
 import MapPage from './pages/MapPage'
@@ -29,6 +30,7 @@ function Shell({ children }: { children: ReactNode }) {
                   Пораки
                   {unread > 0 && <span className="badge" aria-label={`${unread} непрочитани`}>{unread}</span>}
                 </NavLink>
+                <NavLink to="/assistant">Асистент</NavLink>
                 <NavLink to="/listing">Мој оглас</NavLink>
                 <NavLink to="/profile">Профил</NavLink>
               </>
@@ -92,6 +94,7 @@ export default function App() {
         <Route path="/profile/edit" element={<Guard need="member"><ProfileFormPage editing /></Guard>} />
         <Route path="/profile" element={<Guard need="member"><ProfilePage /></Guard>} />
         <Route path="/matches" element={<Guard need="member"><MatchesPage /></Guard>} />
+        <Route path="/assistant" element={<Guard need="member"><AssistantPage /></Guard>} />
         <Route path="/messages" element={<Guard need="member"><MessagesPage /></Guard>} />
         <Route path="/messages/:id" element={<Guard need="member"><MessagesPage /></Guard>} />
         <Route path="/listing" element={<Guard need="member"><ListingPage /></Guard>} />

@@ -1,8 +1,6 @@
 package mk.roommatematch.ai;
 
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Set;
 import mk.roommatematch.ai.MapFilters.PlaceKind;
@@ -93,7 +91,9 @@ public class MapFilterService {
         if (!filters.hasLocation()) {
             return true;
         }
-        return dorm.getLatitude() != null && dorm.getLongitude() != null && inArea(nearestArea(dorm), filters);
+        // Dorms store coordinates only, and the closest town or municipality is where they are.
+        return dorm.getLatitude() != null && dorm.getLongitude() != null
+                && inArea(Area.nearestTo(dorm.getLatitude(), dorm.getLongitude()), filters);
     }
 
     private static boolean inArea(Area area, MapFilters filters) {
@@ -102,19 +102,6 @@ public class MapFilterService {
 
     private static PlaceKind kindOf(PropertyType type) {
         return type == PropertyType.HOUSE ? PlaceKind.HOUSE : PlaceKind.APARTMENT;
-    }
-
-    /** Dorms store coordinates only, and the closest town or municipality is where they are. */
-    private static Area nearestArea(Dorm dorm) {
-        return Arrays.stream(Area.values())
-                .min(Comparator.comparingDouble(area -> squaredDistance(area, dorm)))
-                .orElseThrow();
-    }
-
-    private static double squaredDistance(Area area, Dorm dorm) {
-        double latitude = area.getLatitude() - dorm.getLatitude();
-        double longitude = (area.getLongitude() - dorm.getLongitude()) * Math.cos(Math.toRadians(dorm.getLatitude()));
-        return latitude * latitude + longitude * longitude;
     }
 
     /** The filters in words, so the user sees how the search was understood. */

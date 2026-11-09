@@ -59,6 +59,22 @@ public enum Area {
         this.longitude = longitude;
     }
 
+    /** The town or Skopje municipality whose centre is closest to a point. */
+    public static Area nearestTo(double latitude, double longitude) {
+        Area nearest = values()[0];
+        double smallest = Double.MAX_VALUE;
+        for (Area area : values()) {
+            double north = area.latitude - latitude;
+            double east = (area.longitude - longitude) * Math.cos(Math.toRadians(latitude));
+            double distance = north * north + east * east;
+            if (distance < smallest) {
+                smallest = distance;
+                nearest = area;
+            }
+        }
+        return nearest;
+    }
+
     public String getLabel() {
         return label;
     }

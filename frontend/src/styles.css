@@ -356,6 +356,7 @@ dd { margin: 0; font-weight: 600; text-align: right; }
 
 .pin-listing { background: var(--accent); }
 .pin-dorm { background: #92400e; }
+.pin-faculty { background: #4338ca; }
 .pin-selected { background: var(--ink); z-index: 1; }
 
 .place-row {
@@ -523,6 +524,30 @@ button.choice { font: inherit; font-weight: 600; color: inherit; }
 }
 
 .part-track span { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+
+.faculty-distance { margin-top: 12px; }
+.faculty-distance .field { margin-bottom: 8px; }
+.distance-result { margin: 0; padding: 0; list-style: none; }
+
+.assistant { display: grid; gap: 12px; max-width: 760px; margin: 0 auto; }
+.assistant > .muted { margin-top: -6px; }
+.assistant > .form-error { margin: 0; }
+.assistant .map-search { margin-bottom: 0; }
+
+.assistant-log {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: calc(100vh - 320px);
+  min-height: 300px;
+  overflow-y: auto;
+}
+
+.assistant-exchange { display: flex; flex-direction: column; gap: 8px; }
+.assistant-empty { display: grid; gap: 8px; }
+.assistant-empty .choice { font: inherit; font-weight: 600; color: inherit; }
+.bubble.not-found { background: #fef3c7; }
+.bubble small { display: block; margin-top: 4px; }
 
 .map-search {
   display: flex;

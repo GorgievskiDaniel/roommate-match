@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { MapContainer, Marker, TileLayer } from 'react-leaflet'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
+import FacultyDistance, { type Faculty } from '../components/FacultyDistance'
 import MapView, { type View } from '../components/MapView'
 import PersonCard from '../components/PersonCard'
 import { LABELS, type AreaOption, type DormDetail, type Listing, type MapBlock, type MapDorm, type MapListing, type MapSearchResult, type Reference } from '../types'
@@ -18,7 +19,7 @@ const BLOCKS_ZOOM = 19
 
 type Selection = { kind: 'listing'; id: number } | { kind: 'dorm'; id: number; block?: MapBlock }
 
-function pin(kind: 'listing' | 'dorm', label: string, selected: boolean) {
+function pin(kind: 'listing' | 'dorm' | 'faculty', label: string, selected: boolean) {
   return L.divIcon({
     className: '',
     html: `<span class="pin pin-${kind}${selected ? ' pin-selected' : ''}">${label}</span>`,
@@ -51,7 +52,12 @@ function Gallery({ images }: { images: Listing['images'] }) {
   )
 }
 
-function ListingPanel({ id }: { id: number }) {
+interface FacultyProps {
+  faculty: Faculty | null
+  onFaculty: (faculty: Faculty | null) => void
+}
+
+function ListingPanel({ id, faculty, onFaculty }: { id: number } & FacultyProps) {
   const [listing, setListing] = useState<Listing | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -78,13 +84,14 @@ function ListingPanel({ id }: { id: number }) {
         {listing.monthlyRent} € месечно по цимер · {listing.freeSpots === 1 ? 'се бара 1 цимер' : `се бараат ${listing.freeSpots} цимери`}
       </p>
       <p className="description">{listing.description}</p>
+      <FacultyDistance path={`/listings/${listing.id}`} selected={faculty} onSelect={onFaculty} />
       <h3>Кој живее овде</h3>
       {listing.residents.map((person) => <PersonCard key={person.userId} person={person} />)}
     </>
   )
 }
 
-function DormPanel({ id, block }: { id: number; block?: MapBlock }) {
+function DormPanel({ id, block, faculty, onFaculty }: { id: number; block?: MapBlock } & FacultyProps) {
   const [dorm, setDorm] = useState<DormDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -107,6 +114,7 @@ function DormPanel({ id, block }: { id: number; block?: MapBlock }) {
     <>
       <h2>{dorm.name}{block ? `, ${block.name}` : ''}</h2>
       {block?.roomOption && <p className="muted">Соба: {block.roomOption}</p>}
+      <FacultyDistance path={`/dorms/${dorm.id}`} selected={faculty} onSelect={onFaculty} />
       <h3>Студенти што бараат цимер</h3>
       {seekers.length === 0 && <p className="muted">Сè уште никој не бара цимер овде.</p>}
       {seekers.map(({ profile, roomOption }) => (
@@ -135,6 +143,7 @@ export default function MapPage() {
   const [search, setSearch] = useState<MapSearchResult | null>(null)
   const [searching, setSearching] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
+  const [faculty, setFaculty] = useState<Faculty | null>(null)
 
   useEffect(() => {
     let active = true
@@ -208,6 +217,29 @@ export default function MapPage() {
       setSearchError(caught instanceof Error ? caught.message : 'Настана грешка.')
     } finally {
       setSearching(false)
+    }
+  }
+
+  function selectedPoint(): [number, number] | null {
+    if (selection?.kind === 'listing') {
+      const listing = data?.listings.find((l) => l.id === selection.id)
+      return listing ? [listing.latitude, listing.longitude] : null
+    }
+    if (selection?.kind === 'dorm') {
+      if (selection.block) return [selection.block.latitude, selection.block.longitude]
+      const dorm = data?.dorms.find((d) => d.id === selection.id)
+      return dorm && dorm.latitude !== null && dorm.longitude !== null ? [dorm.latitude, dorm.longitude] : null
+    }
+    return null
+  }
+
+  /** Shows the faculty together with the chosen place, so the distance can be seen on the map. */
+  function chooseFaculty(chosen: Faculty | null) {
+    setFaculty(chosen)
+    if (chosen) {
+      const place = selectedPoint()
+      setMovedAway(true)
+      setView({ points: [[chosen.latitude, chosen.longitude], ...(place ? [place] : [])] })
     }
   }
 
@@ -345,6 +377,14 @@ export default function MapPage() {
                 eventHandlers={{ click: () => setSelection({ kind: 'dorm', id: dorm.id }) }}
               />
             ))}
+            {faculty && (
+              <Marker
+                position={[faculty.latitude, faculty.longitude]}
+                title={faculty.name}
+                zIndexOffset={1000}
+                icon={pin('faculty', faculty.name, false)}
+              />
+            )}
           </MapContainer>
         </div>
         {showDorms && data && (
@@ -367,8 +407,10 @@ export default function MapPage() {
       </div>
       <aside className="detail-panel card" aria-live="polite">
         {!selection && <p className="muted">Избери точка на мапата за да ги видиш деталите.</p>}
-        {selection?.kind === 'listing' && <ListingPanel id={selection.id} />}
-        {selection?.kind === 'dorm' && <DormPanel id={selection.id} block={selection.block} />}
+        {selection?.kind === 'listing' && <ListingPanel id={selection.id} faculty={faculty} onFaculty={chooseFaculty} />}
+        {selection?.kind === 'dorm' && (
+          <DormPanel id={selection.id} block={selection.block} faculty={faculty} onFaculty={chooseFaculty} />
+        )}
       </aside>
     </div>
   )

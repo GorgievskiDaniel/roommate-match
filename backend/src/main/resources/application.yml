@@ -22,9 +22,17 @@ spring:
       max-request-size: 55MB
 
 app:
+  routing:
+    base-url: https://routing.openstreetmap.de
+    timeout: 10s
+  rag:
+    documents-dir: ${RAG_DOCUMENTS_DIR:dorm-documents}
+    ingest-on-startup: true
+    results: 5
   gemini:
     api-key: ${GEMINI_API_KEY:}
     model: gemini-3.5-flash-lite
+    embedding-model: gemini-embedding-2
     base-url: https://generativelanguage.googleapis.com/v1beta
     api-revision: 2026-05-20
     timeout: 30s
