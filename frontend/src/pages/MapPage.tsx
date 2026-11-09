@@ -1,14 +1,14 @@
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { MapContainer, Marker, TileLayer } from 'react-leaflet'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import MapView, { type View } from '../components/MapView'
 import PersonCard from '../components/PersonCard'
-import { LABELS, type AreaOption, type DormDetail, type Listing, type MapBlock, type MapDorm, type MapListing, type Reference } from '../types'
+import { LABELS, type AreaOption, type DormDetail, type Listing, type MapBlock, type MapDorm, type MapListing, type MapSearchResult, type Reference } from '../types'
 
-const MACEDONIA: View = { center: [41.6, 21.7], zoom: 8 }
+const MACEDONIA = { center: [41.6, 21.7] as [number, number], zoom: 8 }
 const SKOPJE: View = { center: [41.99621, 21.43189], zoom: 12 }
 const CITY_ZOOM = 13
 const MUNICIPALITY_ZOOM = 14
@@ -131,6 +131,10 @@ export default function MapPage() {
   // A dorm chosen from the list moves the map away from the place picked above it.
   const [movedAway, setMovedAway] = useState(false)
   const [areas, setAreas] = useState<AreaOption[]>([])
+  const [query, setQuery] = useState('')
+  const [search, setSearch] = useState<MapSearchResult | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
@@ -164,10 +168,55 @@ export default function MapPage() {
     }
   }
 
-  const dormsOnMap = useMemo(
-    () => data?.dorms.filter((d) => d.blocks.length === 0 && d.latitude !== null && d.longitude !== null) ?? [],
-    [data],
+  const listingsShown = useMemo(
+    () => data?.listings.filter((l) => !search?.listingIds || search.listingIds.includes(l.id)) ?? [],
+    [data, search],
   )
+  const dormsShown = useMemo(
+    () => data?.dorms.filter((d) => !search?.dormIds || search.dormIds.includes(d.id)) ?? [],
+    [data, search],
+  )
+  const dormsOnMap = useMemo(
+    () => dormsShown.filter((d) => d.blocks.length === 0 && d.latitude !== null && d.longitude !== null),
+    [dormsShown],
+  )
+
+  async function runSearch(event: FormEvent) {
+    event.preventDefault()
+    if (!query.trim() || searching) return
+    setSearching(true)
+    setSearchError(null)
+    try {
+      const result = await api<MapSearchResult>('/map/search', { method: 'POST', body: { query } })
+      setSelection(null)
+      if (!result.understood) {
+        setSearch(null)
+        setSearchError('Не го разбрав барањето. Напиши што бараш, на пример: стан во Карпош до 200 евра.')
+        return
+      }
+      setSearch(result)
+      const points: [number, number][] = [
+        ...(data?.listings.filter((l) => result.listingIds.includes(l.id)).map((l): [number, number] => [l.latitude, l.longitude]) ?? []),
+        ...(data?.dorms.filter((d) => result.dormIds.includes(d.id) && d.latitude !== null && d.longitude !== null)
+          .map((d): [number, number] => [d.latitude!, d.longitude!]) ?? []),
+      ]
+      if (points.length > 0) {
+        setMovedAway(true)
+        setView({ points })
+      }
+    } catch (caught) {
+      setSearchError(caught instanceof Error ? caught.message : 'Настана грешка.')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  function clearSearch() {
+    setSearch(null)
+    setQuery('')
+    setSearchError(null)
+    choosePlace(place)
+  }
 
   const isSelected = (kind: Selection['kind'], id: number) => selection?.kind === kind && selection.id === id
   const isBlockSelected = (dorm: MapDorm, block: MapBlock) =>
@@ -211,6 +260,33 @@ export default function MapPage() {
             </label>
           </div>
         </div>
+        <form className="map-search" onSubmit={(event) => void runSearch(event)}>
+          <label className="sr-only" htmlFor="map-search">Пребарај со свои зборови</label>
+          <input
+            id="map-search"
+            value={query}
+            maxLength={300}
+            placeholder="На пример: стан во Аеродром до 150 евра, без пушачи"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <button type="submit" className="button" disabled={searching || !query.trim()}>
+            {searching ? 'Барам…' : 'Пребарај'}
+          </button>
+        </form>
+        {searchError && <p role="alert" className="form-error">{searchError}</p>}
+        {search && (
+          <div className="search-result" aria-live="polite">
+            <span>
+              {search.listingIds.length + search.dormIds.length === 0
+                ? 'Нема резултати за ова барање.'
+                : `Пронајдени: ${search.listingIds.length} огласи, ${search.dormIds.length} домови.`}
+            </span>
+            <ul className="tags">
+              {search.filters.map((filter) => <li key={filter}>{filter}</li>)}
+            </ul>
+            <button type="button" className="link-button" onClick={clearSearch}>Исчисти</button>
+          </div>
+        )}
         <div className="place-row">
         <label className="field place-select">
           <span>Покажи на мапата</span>
@@ -240,7 +316,7 @@ export default function MapPage() {
               maxZoom={BLOCKS_ZOOM}
             />
             <MapView view={view} />
-            {data?.listings.filter((l) => (l.propertyType === 'HOUSE' ? showHouses : showApartments)).map((listing) => (
+            {listingsShown.filter((l) => (l.propertyType === 'HOUSE' ? showHouses : showApartments)).map((listing) => (
               <Marker
                 key={`listing-${listing.id}`}
                 position={[listing.latitude, listing.longitude]}
@@ -249,7 +325,7 @@ export default function MapPage() {
                 eventHandlers={{ click: () => setSelection({ kind: 'listing', id: listing.id }) }}
               />
             ))}
-            {showDorms && data?.dorms.flatMap((dorm) => dorm.blocks.map((block) => (
+            {showDorms && dormsShown.flatMap((dorm) => dorm.blocks.map((block) => (
               <Marker
                 key={`block-${dorm.id}-${block.name}`}
                 position={[block.latitude, block.longitude]}

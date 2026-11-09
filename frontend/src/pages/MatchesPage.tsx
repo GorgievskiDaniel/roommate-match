@@ -18,6 +18,41 @@ function Part({ label, value }: { label: string; value: number }) {
   )
 }
 
+function Explanation({ userId }: { userId: number }) {
+  const [text, setText] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  async function load() {
+    setLoading(true)
+    setError(null)
+    try {
+      setText((await api<{ text: string }>(`/matches/${userId}/explanation`)).text)
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Настана грешка.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (text) {
+    return (
+      <div className="explanation">
+        <p>{text}</p>
+        <small className="muted">Автоматски напишан текст, врз основа на вашите одговори.</small>
+      </div>
+    )
+  }
+  return (
+    <div className="message-action">
+      <button type="button" className="link-button explain-button" disabled={loading} onClick={() => void load()}>
+        {loading ? 'Се пишува…' : 'Зошто одговараме?'}
+      </button>
+      {error && <small role="alert" className="field-error">{error}</small>}
+    </div>
+  )
+}
+
 function MatchCard({ match }: { match: Match }) {
   const { profile, score } = match
   return (
@@ -37,6 +72,7 @@ function MatchCard({ match }: { match: Match }) {
       {score.differentRoomType && (
         <p className="notice">Бара различен тип на соба, па процентот е намален наполовина.</p>
       )}
+      <Explanation userId={profile.userId} />
       <PersonCard person={profile} note={match.roomOption} />
       {match.situation && <p className="muted">{LABELS.situation[match.situation]}</p>}
       {match.areas.length > 0 && <p className="muted">Локација: {match.areas.join(', ')}</p>}

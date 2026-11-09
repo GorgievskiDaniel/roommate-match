@@ -136,6 +136,13 @@ export interface DormDetail {
   seekers: { profile: ProfileSummary; roomOption: string | null }[]
 }
 
+export interface MapSearchResult {
+  understood: boolean
+  filters: string[]
+  listingIds: number[]
+  dormIds: number[]
+}
+
 export interface Conversation {
   id: number
   otherUserId: number

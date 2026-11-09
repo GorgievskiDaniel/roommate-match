@@ -65,6 +65,48 @@ public class MatchService {
                 .toList();
     }
 
+    /** Everything the explanation may mention. Names and contact details are left out on purpose. */
+    @Transactional(readOnly = true)
+    public Optional<PairFacts> factsFor(Long viewerId, Long otherId) {
+        Optional<Profile> viewer = profiles.findById(viewerId);
+        Optional<Profile> other = profiles.findById(otherId);
+        if (viewer.isEmpty() || other.isEmpty()) {
+            return Optional.empty();
+        }
+        Listing viewerListing = listings.findByResident(viewerId).orElse(null);
+        Listing otherListing = listings.findByResident(otherId).orElse(null);
+        return scorer.score(toPerson(viewer.get(), viewerListing), toPerson(other.get(), otherListing))
+                .map(score -> new PairFacts(score, toSide(viewer.get(), viewerListing), toSide(other.get(), otherListing),
+                        sharedHobbies(viewer.get(), other.get()), other.get().getFirstName()));
+    }
+
+    public record Side(boolean smoker, boolean hasPets, String guests, int tidinessOutOf5, String sleep,
+                       int quietNeedOutOf5, List<String> hobbies, Integer rentMin, Integer rentMax, List<String> places) {
+    }
+
+    public record PairFacts(Score score, Side reader, Side other, List<String> sharedHobbies, String otherFirstName) {
+    }
+
+    private static Side toSide(Profile p, Listing listing) {
+        Set<Area> areas = listing != null ? Set.of(listing.getArea()) : p.getAreas();
+        return new Side(
+                p.isSmoker(),
+                p.isHasPets(),
+                p.getGuestsFrequency().name(),
+                p.getTidiness(),
+                p.getSleepSchedule().name(),
+                p.getQuietNeed(),
+                p.getHobbies().stream().map(Hobby::getName).sorted().toList(),
+                listing != null ? Integer.valueOf(listing.getMonthlyRent()) : p.getBudgetMin(),
+                listing != null ? Integer.valueOf(listing.getMonthlyRent()) : p.getBudgetMax(),
+                areas.stream().sorted().map(Area::getLabel).toList());
+    }
+
+    private static List<String> sharedHobbies(Profile a, Profile b) {
+        Set<Long> theirs = b.getHobbies().stream().map(Hobby::getId).collect(Collectors.toSet());
+        return a.getHobbies().stream().filter(h -> theirs.contains(h.getId())).map(Hobby::getName).sorted().toList();
+    }
+
     private static MatchResponse toResponse(Profile profile, Score score, Listing listing) {
         Set<Area> areas = listing != null ? Set.of(listing.getArea()) : profile.getAreas();
         return new MatchResponse(

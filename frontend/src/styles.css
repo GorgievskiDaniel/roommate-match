@@ -524,6 +524,33 @@ button.choice { font: inherit; font-weight: 600; color: inherit; }
 
 .part-track span { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
 
+.map-search {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.map-search input { flex: 1; min-width: 0; }
+
+.search-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.search-result .tags { margin: 0; }
+
+.explanation {
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent);
+  background: var(--background);
+}
+
+.explanation p { margin: 0 0 4px; overflow-wrap: anywhere; }
+.explain-button { color: var(--accent-dark); padding: 0; text-decoration: underline; text-underline-offset: 3px; }
+
 .message-action { display: grid; justify-items: start; gap: 4px; margin-top: 10px; }
 
 .badge {

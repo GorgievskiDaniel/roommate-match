@@ -2,6 +2,7 @@ package mk.roommatematch.common;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import mk.roommatematch.ai.AiUnavailableException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -16,6 +17,13 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 
 @RestControllerAdvice
 public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
+
+    @ExceptionHandler(AiUnavailableException.class)
+    ProblemDetail handleAiUnavailable(AiUnavailableException ex) {
+        logger.warn("Language model unavailable: " + ex.getMessage());
+        return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
+                "Паметната функција моментално не е достапна. Обидете се повторно подоцна.");
+    }
 
     @ExceptionHandler(FieldValidationException.class)
     ProblemDetail handleFieldValidation(FieldValidationException ex) {
