@@ -21,6 +21,12 @@ public class User {
     @Column(name = "password_hash", nullable = false)
     private String passwordHash;
 
+    @Column(name = "email_verified", nullable = false)
+    private boolean emailVerified;
+
+    @Column(name = "session_version", nullable = false)
+    private int sessionVersion;
+
     protected User() {
     }
 
@@ -39,5 +45,28 @@ public class User {
 
     public String getPasswordHash() {
         return passwordHash;
+    }
+
+    public boolean isEmailVerified() {
+        return emailVerified;
+    }
+
+    public int getSessionVersion() {
+        return sessionVersion;
+    }
+
+    public void verifyEmail() {
+        this.emailVerified = true;
+    }
+
+    /** Login tokens issued before this no longer work. */
+    public void changePassword(String passwordHash) {
+        this.passwordHash = passwordHash;
+        endSessions();
+    }
+
+    /** Every login token issued so far stops working. */
+    public void endSessions() {
+        this.sessionVersion++;
     }
 }

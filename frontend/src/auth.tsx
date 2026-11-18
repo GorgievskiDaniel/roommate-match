@@ -1,25 +1,32 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { api, ApiError, getToken, setToken } from './api'
+import { api, ApiError } from './api'
 import type { CurrentUser } from './types'
 
 interface AuthState {
   user: CurrentUser | null
   loading: boolean
   loadError: string | null
-  authenticate: (path: 'login' | 'register', email: string, password: string) => Promise<void>
+  /** Loads the account after the backend set the login cookie (login, confirmed e-mail, new password). */
+  signIn: () => Promise<void>
   refresh: () => Promise<void>
-  logout: () => void
+  /** Ends the session on the server, on every device. */
+  logout: () => Promise<void>
 }
 
 const AuthContext = createContext<AuthState | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<CurrentUser | null>(null)
-  const [loading, setLoading] = useState(getToken() !== null)
+  // The cookie cannot be read from the page, so the backend is asked whether someone is logged in.
+  const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
 
-  const logout = useCallback(() => {
-    setToken(null)
+  const logout = useCallback(async () => {
+    try {
+      await api('/logout', { method: 'POST' })
+    } catch {
+      // The session already ended on the server (or it is unreachable); the page logs out anyway.
+    }
     setUser(null)
   }, [])
 
@@ -29,36 +36,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(await api<CurrentUser>('/me'))
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
-        logout()
+        setUser(null)
       } else {
         setLoadError(error instanceof Error ? error.message : 'Настана грешка.')
       }
     } finally {
       setLoading(false)
     }
-  }, [logout])
+  }, [])
 
-  const authenticate = useCallback(
-    async (path: 'login' | 'register', email: string, password: string) => {
-      const { token } = await api<{ token: string }>(`/auth/${path}`, {
-        method: 'POST',
-        body: { email, password },
-      })
-      setToken(token)
-      await refresh()
-    },
-    [refresh],
-  )
+  const signIn = refresh
 
   useEffect(() => {
-    if (getToken()) {
-      void refresh()
-    }
+    void refresh()
   }, [refresh])
 
   const value = useMemo(
-    () => ({ user, loading, loadError, authenticate, refresh, logout }),
-    [user, loading, loadError, authenticate, refresh, logout],
+    () => ({ user, loading, loadError, signIn, refresh, logout }),
+    [user, loading, loadError, signIn, refresh, logout],
   )
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }

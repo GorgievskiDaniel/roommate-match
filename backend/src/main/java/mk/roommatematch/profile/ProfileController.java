@@ -5,7 +5,12 @@ import mk.roommatematch.profile.ProfileDtos.ProfileRequest;
 import mk.roommatematch.profile.ProfileDtos.ProfileResponse;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -29,5 +34,15 @@ public class ProfileController {
     @PutMapping
     ProfileResponse save(@AuthenticationPrincipal Jwt jwt, @Valid @RequestBody ProfileRequest request) {
         return profileService.save(Long.valueOf(jwt.getSubject()), request);
+    }
+
+    @PostMapping(path = "/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    ProfileResponse setAvatar(@AuthenticationPrincipal Jwt jwt, @RequestParam("image") MultipartFile image) {
+        return profileService.setAvatar(Long.valueOf(jwt.getSubject()), image);
+    }
+
+    @DeleteMapping("/avatar")
+    ProfileResponse removeAvatar(@AuthenticationPrincipal Jwt jwt) {
+        return profileService.removeAvatar(Long.valueOf(jwt.getSubject()));
     }
 }

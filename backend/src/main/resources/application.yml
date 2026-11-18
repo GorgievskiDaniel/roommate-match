@@ -1,6 +1,8 @@
 spring:
   application:
     name: roommate-match
+  config:
+    import: optional:file:.env[.properties]
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5433/roommate_match}
     username: ${DB_USER:roommate}
@@ -9,10 +11,88 @@ spring:
     hibernate:
       ddl-auto: validate
     open-in-view: false
+    properties:
+      hibernate:
+        default_batch_fetch_size: 50
   flyway:
     enabled: true
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 55MB
+  # Locally the mail catcher from docker-compose receives everything, see http://localhost:8025.
+  mail:
+    host: ${MAIL_HOST:localhost}
+    port: ${MAIL_PORT:1025}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    properties:
+      "[mail.smtp.auth]": ${MAIL_SMTP_AUTH:false}
+      "[mail.smtp.starttls.enable]": ${MAIL_STARTTLS:false}
+      "[mail.smtp.connectiontimeout]": 5000
+      "[mail.smtp.timeout]": 10000
+      "[mail.smtp.writetimeout]": 10000
 
 app:
+  routing:
+    base-url: https://routing.openstreetmap.de
+    timeout: 10s
+  # Address suggestions while typing, from OpenStreetMap data.
+  geocoding:
+    base-url: https://photon.komoot.io
+    timeout: 5s
+  rag:
+    documents-dir: ${RAG_DOCUMENTS_DIR:dorm-documents}
+    ingest-on-startup: true
+    results: 6
+    # Questions the documents cannot answer are looked up on Google. Google offers this only with billing enabled.
+    web-search: ${ASSISTANT_WEB_SEARCH:true}
+  gemini:
+    api-key: ${GEMINI_API_KEY:}
+    model: gemini-3.8-flash
+    # Tried in this order when the model above is busy or over its limit.
+    fallback-models: gemini-3.6-flash, gemini-3.5-flash-lite
+    # This model does not support the "minimal" level.
+    thinking-level: low
+    embedding-model: gemini-embedding-2
+    base-url: https://generativelanguage.googleapis.com/v1beta
+    api-revision: 2026-05-20
+    timeout: 30s
+  websocket:
+    allowed-origins: ${WS_ALLOWED_ORIGINS:http://localhost:5173}
+  mail:
+    # Mail servers such as Gmail only send from the account that logs in, so that is the default.
+    from: ${MAIL_FROM:Roommate Match <${MAIL_USERNAME:no-reply@roommatematch.local}>}
+    frontend-url: ${FRONTEND_URL:http://localhost:5173}
+  accounts:
+    verification-valid-for: 24h
+    reset-valid-for: 1h
+    # A new link is not sent more often than this, so nobody can flood an inbox.
+    resend-after: 60s
+  # Location, gender, smoking, pets and a rent within reach are requirements, not part of the score.
+  matching:
+    apartment:
+      daily: 0.25
+      together: 0.20
+      rent: 0.30
+      hobbies: 0.15
+      age: 0.10
+    dorm:
+      daily: 0.35
+      together: 0.35
+      hobbies: 0.20
+      age: 0.10
+    # Students of the same faculty share timetables and exams, so they get this much more, up to 100%.
+    same-faculty-bonus: 0.05
+  uploads:
+    dir: ${UPLOADS_DIR:uploads}
+  # Requests per minute: login and e-mail links per address, the language model and address search per student.
+  rate-limit:
+    auth: 5
+    ai: 15
+    addresses: 60
   jwt:
     secret: ${JWT_SECRET}
     expiration: 7d
+    # The login cookie goes over HTTPS only. Set COOKIE_SECURE=true in production.
+    cookie-secure: ${COOKIE_SECURE:false}

@@ -1,0 +1,453 @@
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { MapContainer, Marker, TileLayer } from 'react-leaflet'
+import { Link, useSearchParams } from 'react-router-dom'
+import { api } from '../api'
+import FacultyDistance, { type Faculty } from '../components/FacultyDistance'
+import MapView, { type View } from '../components/MapView'
+import PersonCard from '../components/PersonCard'
+import { LABELS, wantedRoommate, type AreaOption, type DormDetail, type Listing, type MapBlock, type MapDorm, type MapListing, type MapSearchResult, type Reference } from '../types'
+
+const MACEDONIA = { center: [41.6, 21.7] as [number, number], zoom: 8 }
+const SKOPJE: View = { center: [41.99621, 21.43189], zoom: 12 }
+const CITY_ZOOM = 13
+const MUNICIPALITY_ZOOM = 14
+const DORM_ZOOM = 15
+// Blocks stand so close together that their points only separate this far in.
+const BLOCKS_ZOOM = 19
+
+type Selection = { kind: 'listing'; id: number } | { kind: 'dorm'; id: number; block?: MapBlock }
+
+function pin(kind: 'listing' | 'dorm' | 'faculty', label: string, selected: boolean) {
+  return L.divIcon({
+    className: '',
+    html: `<span class="pin pin-${kind}${selected ? ' pin-selected' : ''}">${label}</span>`,
+    iconSize: [0, 0],
+  })
+}
+
+function Gallery({ images }: { images: Listing['images'] }) {
+  const [index, setIndex] = useState(0)
+  const current = images[Math.min(index, images.length - 1)]
+  return (
+    <div className="gallery">
+      <img src={current.url} alt="Слика од огласот" className="gallery-main" />
+      {images.length > 1 && (
+        <div className="gallery-thumbs">
+          {images.map((image, i) => (
+            <button
+              key={image.id}
+              type="button"
+              className={i === index ? 'thumb selected' : 'thumb'}
+              aria-label={`Слика ${i + 1}`}
+              onClick={() => setIndex(i)}
+            >
+              <img src={image.url} alt="" />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+interface FacultyProps {
+  faculty: Faculty | null
+  onFaculty: (faculty: Faculty | null) => void
+}
+
+function ListingPanel({ id, faculty, onFaculty }: { id: number } & FacultyProps) {
+  const [listing, setListing] = useState<Listing | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    setListing(null)
+    setError(null)
+    api<Listing>(`/listings/${id}`)
+      .then((loaded) => active && setListing(loaded))
+      .catch((caught: Error) => active && setError(caught.message))
+    return () => {
+      active = false
+    }
+  }, [id])
+
+  if (error) return <p role="alert" className="form-error">{error}</p>
+  if (!listing) return <p className="muted">Се вчитува…</p>
+  return (
+    <>
+      <Gallery key={listing.id} images={listing.images} />
+      <h2>{LABELS.propertyType[listing.propertyType]} во {listing.areaName}</h2>
+      <p className="muted">{listing.address}</p>
+      <p className="price">
+        {listing.monthlyRent} € месечно по цимер · {listing.freeSpots === 1 ? 'се бара 1 цимер' : `се бараат ${listing.freeSpots} цимери`}
+      </p>
+      <p className="muted">Пол на цимерот: {wantedRoommate(listing.roommateGender).toLowerCase()}</p>
+      <p className="description">{listing.description}</p>
+      <Link to={`/listings/${listing.id}`} className="button secondary">Отвори го огласот</Link>
+      <FacultyDistance path={`/listings/${listing.id}`} selected={faculty} onSelect={onFaculty} />
+      <h3>Кој живее овде</h3>
+      {listing.residents.map((person) => <PersonCard key={person.userId} person={person} />)}
+    </>
+  )
+}
+
+function DormPanel({ id, block, faculty, onFaculty }: { id: number; block?: MapBlock } & FacultyProps) {
+  const [dorm, setDorm] = useState<DormDetail | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let active = true
+    setDorm(null)
+    setError(null)
+    api<DormDetail>(`/dorms/${id}`)
+      .then((loaded) => active && setDorm(loaded))
+      .catch((caught: Error) => active && setError(caught.message))
+    return () => {
+      active = false
+    }
+  }, [id])
+
+  if (error) return <p role="alert" className="form-error">{error}</p>
+  if (!dorm) return <p className="muted">Се вчитува…</p>
+  const seekers = block?.roomOption ? dorm.seekers.filter((s) => s.roomOption === block.roomOption) : dorm.seekers
+  return (
+    <>
+      <h2>{dorm.name}{block ? `, ${block.name}` : ''}</h2>
+      {dorm.openingNote && <p className="opening-note">{dorm.openingNote}</p>}
+      {dorm.photoUrls.length > 0 && <img className="dorm-panel-photo" src={dorm.photoUrls[0]} alt={`${dorm.name}`} />}
+      {block?.roomOption && <p className="muted">Соба: {block.roomOption}</p>}
+      <FacultyDistance path={`/dorms/${dorm.id}`} selected={faculty} onSelect={onFaculty} />
+      <h3>Студенти што бараат цимер</h3>
+      {seekers.length === 0 && <p className="muted">Сè уште никој не бара цимер овде.</p>}
+      {seekers.map(({ profile, roomOption }) => (
+        <PersonCard key={profile.userId} person={profile} note={roomOption} />
+      ))}
+    </>
+  )
+}
+
+export default function MapPage() {
+  const [data, setData] = useState<{ listings: MapListing[]; dorms: MapDorm[] } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [showApartments, setShowApartments] = useState(true)
+  const [showHouses, setShowHouses] = useState(true)
+  const [showDorms, setShowDorms] = useState(true)
+  // A link from the matches page names the listing to open.
+  const [searchParams] = useSearchParams()
+  const linkedListing = Number(searchParams.get('listing')) || null
+  const [selection, setSelection] = useState<Selection | null>(linkedListing ? { kind: 'listing', id: linkedListing } : null)
+  // A listing opened from its page or from a match is shown alone, so it is easy to see.
+  const [focused, setFocused] = useState(linkedListing !== null)
+  const focusedListing = focused && linkedListing !== null ? data?.listings.find((l) => l.id === linkedListing) ?? null : null
+  const [place, setPlace] = useState('MACEDONIA')
+  const [view, setView] = useState<View>(MACEDONIA)
+  // A dorm chosen from the list moves the map away from the place picked above it.
+  const [movedAway, setMovedAway] = useState(false)
+  const [areas, setAreas] = useState<AreaOption[]>([])
+  const [query, setQuery] = useState('')
+  const [search, setSearch] = useState<MapSearchResult | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState<string | null>(null)
+  const [faculty, setFaculty] = useState<Faculty | null>(null)
+
+  useEffect(() => {
+    let active = true
+    api<{ listings: MapListing[]; dorms: MapDorm[] }>('/map')
+      .then((loaded) => {
+        if (!active) return
+        setData(loaded)
+        const linked = loaded.listings.find((listing) => listing.id === linkedListing)
+        if (linked) {
+          setMovedAway(true)
+          setView({ center: [linked.latitude, linked.longitude], zoom: DORM_ZOOM })
+        }
+      })
+      .catch((caught: Error) => active && setError(caught.message))
+    api<Reference>('/reference')
+      .then((reference) => active && setAreas(reference.areas))
+      .catch((caught: Error) => active && setError(caught.message))
+    return () => {
+      active = false
+    }
+  }, [linkedListing])
+
+  function choosePlace(code: string) {
+    setPlace(code)
+    setMovedAway(false)
+    if (code === 'MACEDONIA') return setView(MACEDONIA)
+    if (code === 'SKOPJE') return setView(SKOPJE)
+    const area = areas.find((candidate) => candidate.code === code)
+    if (area) {
+      setView({ center: [area.latitude, area.longitude], zoom: area.skopje ? MUNICIPALITY_ZOOM : CITY_ZOOM })
+    }
+  }
+
+  const listingsShown = useMemo(
+    () => focusedListing ? [focusedListing]
+      : data?.listings.filter((l) => !search?.listingIds || search.listingIds.includes(l.id)) ?? [],
+    [data, search, focusedListing],
+  )
+  const dormsShown = useMemo(
+    () => focusedListing ? [] : data?.dorms.filter((d) => !search?.dormIds || search.dormIds.includes(d.id)) ?? [],
+    [data, search, focusedListing],
+  )
+
+  function focusOn(listing: MapListing) {
+    setFocused(true)
+    setSelection({ kind: 'listing', id: listing.id })
+    setMovedAway(true)
+    setView({ center: [listing.latitude, listing.longitude], zoom: DORM_ZOOM })
+  }
+  const dormsOnMap = useMemo(
+    () => dormsShown.filter((d) => d.blocks.length === 0 && d.latitude !== null && d.longitude !== null),
+    [dormsShown],
+  )
+
+  async function runSearch(event: FormEvent) {
+    event.preventDefault()
+    if (!query.trim() || searching) return
+    setSearching(true)
+    setSearchError(null)
+    try {
+      const result = await api<MapSearchResult>('/map/search', { method: 'POST', body: { query } })
+      setSelection(null)
+      setFocused(false)
+      if (!result.understood) {
+        setSearch(null)
+        setSearchError('Не го разбрав барањето. Напиши што бараш, на пример: стан во Карпош до 200 евра.')
+        return
+      }
+      setSearch(result)
+      const points: [number, number][] = [
+        ...(data?.listings.filter((l) => result.listingIds.includes(l.id)).map((l): [number, number] => [l.latitude, l.longitude]) ?? []),
+        ...(data?.dorms.filter((d) => result.dormIds.includes(d.id) && d.latitude !== null && d.longitude !== null)
+          .map((d): [number, number] => [d.latitude!, d.longitude!]) ?? []),
+      ]
+      if (points.length > 0) {
+        setMovedAway(true)
+        setView({ points })
+      }
+    } catch (caught) {
+      setSearchError(caught instanceof Error ? caught.message : 'Настана грешка.')
+    } finally {
+      setSearching(false)
+    }
+  }
+
+  function selectedPoint(): [number, number] | null {
+    if (selection?.kind === 'listing') {
+      const listing = data?.listings.find((l) => l.id === selection.id)
+      return listing ? [listing.latitude, listing.longitude] : null
+    }
+    if (selection?.kind === 'dorm') {
+      if (selection.block) return [selection.block.latitude, selection.block.longitude]
+      const dorm = data?.dorms.find((d) => d.id === selection.id)
+      return dorm && dorm.latitude !== null && dorm.longitude !== null ? [dorm.latitude, dorm.longitude] : null
+    }
+    return null
+  }
+
+  /** Shows the faculty together with the chosen place, so the distance can be seen on the map. */
+  function chooseFaculty(chosen: Faculty | null) {
+    setFaculty(chosen)
+    if (chosen) {
+      const place = selectedPoint()
+      setMovedAway(true)
+      setView({ points: [[chosen.latitude, chosen.longitude], ...(place ? [place] : [])] })
+    }
+  }
+
+  function clearSearch() {
+    setSearch(null)
+    setQuery('')
+    setSearchError(null)
+    choosePlace(place)
+  }
+
+  const isSelected = (kind: Selection['kind'], id: number) => selection?.kind === kind && selection.id === id
+  const isBlockSelected = (dorm: MapDorm, block: MapBlock) =>
+    selection?.kind === 'dorm' && selection.id === dorm.id && selection.block?.name === block.name
+
+  function showDorm(dorm: MapDorm) {
+    setSelection({ kind: 'dorm', id: dorm.id })
+    const { blocks } = dorm
+    if (blocks.length > 0) {
+      setMovedAway(true)
+      setView({
+        center: [
+          blocks.reduce((sum, b) => sum + b.latitude, 0) / blocks.length,
+          blocks.reduce((sum, b) => sum + b.longitude, 0) / blocks.length,
+        ],
+        zoom: BLOCKS_ZOOM,
+      })
+    } else if (dorm.latitude !== null && dorm.longitude !== null) {
+      setMovedAway(true)
+      setView({ center: [dorm.latitude, dorm.longitude], zoom: DORM_ZOOM })
+    }
+  }
+
+  return (
+    <div className="map-page">
+      <div className="map-column">
+        <div className="map-toolbar">
+          <h1>Каде се бара цимер</h1>
+          <div className="choices">
+            <label className={showApartments ? 'choice selected' : 'choice'}>
+              <input type="checkbox" checked={showApartments} onChange={() => setShowApartments(!showApartments)} />
+              Станови
+            </label>
+            <label className={showHouses ? 'choice selected' : 'choice'}>
+              <input type="checkbox" checked={showHouses} onChange={() => setShowHouses(!showHouses)} />
+              Куќи
+            </label>
+            <label className={showDorms ? 'choice selected' : 'choice'}>
+              <input type="checkbox" checked={showDorms} onChange={() => setShowDorms(!showDorms)} />
+              Студентски домови
+            </label>
+          </div>
+        </div>
+        <form className="map-search" onSubmit={(event) => void runSearch(event)}>
+          <label className="sr-only" htmlFor="map-search">Пребарај со свои зборови</label>
+          <input
+            id="map-search"
+            value={query}
+            maxLength={300}
+            placeholder="На пример: стан во Аеродром до 150 евра, без пушачи"
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <button type="submit" className="button" disabled={searching || !query.trim()}>
+            {searching ? 'Барам…' : 'Пребарај'}
+          </button>
+        </form>
+        {searchError && <p role="alert" className="form-error">{searchError}</p>}
+        {search && (
+          <div className="search-result" aria-live="polite">
+            <span>
+              {search.listingIds.length + search.dormIds.length === 0
+                ? 'Нема резултати за ова барање.'
+                : `Пронајдени огласи: ${search.listingIds.length}, домови: ${search.dormIds.length}.`}
+            </span>
+            <ul className="tags">
+              {search.filters.map((filter) => <li key={filter}>{filter}</li>)}
+            </ul>
+            <button type="button" className="link-button" onClick={clearSearch}>Исчисти</button>
+          </div>
+        )}
+        <div className="place-row">
+        <label className="field place-select">
+          <span>Покажи на мапата</span>
+          <select value={place} onChange={(e) => choosePlace(e.target.value)}>
+            <option value="MACEDONIA">Цела Македонија</option>
+            <option value="SKOPJE">Скопје</option>
+            <optgroup label="Општини во Скопје">
+              {areas.filter((a) => a.skopje).map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+            </optgroup>
+            <optgroup label="Други градови">
+              {areas.filter((a) => !a.skopje).map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+            </optgroup>
+          </select>
+        </label>
+        {movedAway && (
+          <button type="button" className="button secondary" onClick={() => choosePlace(place)}>
+            Врати го приказот
+          </button>
+        )}
+        </div>
+        {error && <p role="alert" className="form-error">{error}</p>}
+        {linkedListing !== null && data?.listings.some((l) => l.id === linkedListing) && (
+          <div className="focus-bar" aria-live="polite">
+            {focusedListing ? (
+              <>
+                <span>Прикажан е само избраниот оглас.</span>
+                <button type="button" className="button secondary" onClick={() => setFocused(false)}>
+                  Прикажи ги сите огласи
+                </button>
+              </>
+            ) : (
+              <>
+                <span>Прикажани се сите огласи.</span>
+                <button type="button" className="button secondary"
+                  onClick={() => focusOn(data.listings.find((l) => l.id === linkedListing)!)}>
+                  Прикажи го само избраниот оглас
+                </button>
+              </>
+            )}
+          </div>
+        )}
+        <div className="map-frame">
+          <MapContainer center={MACEDONIA.center} zoom={MACEDONIA.zoom} className="map">
+            <TileLayer
+              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+              url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+              maxZoom={BLOCKS_ZOOM}
+            />
+            <MapView view={view} />
+            {listingsShown.filter((l) => focusedListing || (l.propertyType === 'HOUSE' ? showHouses : showApartments)).map((listing) => (
+              <Marker
+                key={`listing-${listing.id}`}
+                position={[listing.latitude, listing.longitude]}
+                title={`${LABELS.propertyType[listing.propertyType]} во ${listing.areaName}`}
+                icon={pin('listing', `${listing.monthlyRent} €`, isSelected('listing', listing.id))}
+                eventHandlers={{ click: () => setSelection({ kind: 'listing', id: listing.id }) }}
+              />
+            ))}
+            {showDorms && dormsShown.flatMap((dorm) => dorm.blocks.map((block) => (
+              <Marker
+                key={`block-${dorm.id}-${block.name}`}
+                position={[block.latitude, block.longitude]}
+                riseOnHover
+                title={`${dorm.name}, ${block.name}`}
+                icon={pin('dorm', `${dorm.name.replace(/^[ДП]СД /, '')} ${block.name} · ${block.seekers}`, isBlockSelected(dorm, block))}
+                eventHandlers={{ click: () => setSelection({ kind: 'dorm', id: dorm.id, block }) }}
+              />
+            )))}
+            {showDorms && dormsOnMap.map((dorm) => (
+              <Marker
+                key={`dorm-${dorm.id}`}
+                position={[dorm.latitude!, dorm.longitude!]}
+                riseOnHover
+                title={dorm.name}
+                icon={pin('dorm', `${dorm.name} · ${dorm.seekers}`, isSelected('dorm', dorm.id))}
+                eventHandlers={{ click: () => setSelection({ kind: 'dorm', id: dorm.id }) }}
+              />
+            ))}
+            {faculty && (
+              <Marker
+                position={[faculty.latitude, faculty.longitude]}
+                title={faculty.name}
+                zIndexOffset={1000}
+                icon={pin('faculty', faculty.name, false)}
+              />
+            )}
+          </MapContainer>
+        </div>
+        {showDorms && data && !focusedListing && (
+          <section className="dorm-list">
+            <h2>Студентски домови (бараат цимер)</h2>
+            <div className="choices">
+              {data.dorms.map((dorm) => (
+                <button
+                  key={dorm.id}
+                  type="button"
+                  className={isSelected('dorm', dorm.id) ? 'choice selected' : 'choice'}
+                  onClick={() => showDorm(dorm)}
+                >
+                  {dorm.name} ({dorm.seekers})
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+      <aside className="detail-panel card" aria-live="polite">
+        {!selection && <p className="muted">Избери точка на мапата за да ги видиш деталите.</p>}
+        {selection?.kind === 'listing' && <ListingPanel id={selection.id} faculty={faculty} onFaculty={chooseFaculty} />}
+        {selection?.kind === 'dorm' && (
+          <DormPanel id={selection.id} block={selection.block} faculty={faculty} onFaculty={chooseFaculty} />
+        )}
+      </aside>
+    </div>
+  )
+}
