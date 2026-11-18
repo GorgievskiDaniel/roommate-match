@@ -63,14 +63,16 @@ function MatchCard({ match }: { match: Match }) {
           <span>совпаѓање</span>
         </div>
         <div className="match-parts">
-          <Part label="Навики" value={score.habits} />
+          <Part label="Навики" value={score.daily} />
+          <Part label="Однос со цимерот" value={score.together} />
           {score.rent !== null && <Part label="Кирија" value={score.rent} />}
-          {score.location !== null && <Part label="Локација" value={score.location} />}
           <Part label="Хобиња" value={score.hobbies} />
+          <Part label="Возраст" value={score.age} />
         </div>
       </div>
+      {score.sameFaculty && <p className="same-faculty">Студирате на ист факултет</p>}
       {score.differentRoomType && (
-        <p className="notice">Бара различен тип на соба, па процентот е намален наполовина.</p>
+        <p className="notice">Бара друг тип на соба (друг блок), затоа е на крајот од листата.</p>
       )}
       <Explanation userId={profile.userId} />
       <PersonCard person={profile} note={match.roomOption} />

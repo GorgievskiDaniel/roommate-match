@@ -10,6 +10,8 @@ public interface ListingRepository extends JpaRepository<Listing, Long> {
 
     Optional<Listing> findByInviteCode(String inviteCode);
 
+    List<Listing> findByOwnerId(Long ownerId);
+
     @Query("select l from Listing l where :userId member of l.residentIds")
     Optional<Listing> findByResident(@Param("userId") Long userId);
 

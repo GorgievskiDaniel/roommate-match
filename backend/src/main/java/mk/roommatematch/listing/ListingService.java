@@ -10,9 +10,11 @@ import mk.roommatematch.common.FieldValidationException;
 import mk.roommatematch.listing.ListingDtos.ImageResponse;
 import mk.roommatematch.listing.ListingDtos.ListingRequest;
 import mk.roommatematch.listing.ListingDtos.ListingResponse;
+import mk.roommatematch.listing.ListingDtos.PropertyType;
 import mk.roommatematch.profile.Profile;
 import mk.roommatematch.profile.ProfileDtos.ProfileSummary;
-import mk.roommatematch.profile.ProfileEnums.Situation;
+import mk.roommatematch.profile.ProfileEnums.Gender;
+import mk.roommatematch.profile.ProfileEnums.GenderPreference;
 import mk.roommatematch.profile.ProfileRepository;
 import mk.roommatematch.profile.ProfileService;
 import org.springframework.http.HttpStatus;
@@ -58,7 +60,8 @@ public class ListingService {
 
     @Transactional
     public ListingResponse create(Long userId, ListingRequest request) {
-        requireHasPlace(userId);
+        checkAmenities(request);
+        requireProfile(userId);
         requireNotResident(userId);
         Listing listing = new Listing(userId, newInviteCode());
         listing.update(request);
@@ -67,6 +70,7 @@ public class ListingService {
 
     @Transactional
     public ListingResponse update(Long id, Long userId, ListingRequest request) {
+        checkAmenities(request);
         Listing listing = findOwned(id, userId);
         listing.update(request);
         return toResponse(listing, userId);
@@ -83,7 +87,7 @@ public class ListingService {
 
     @Transactional
     public ListingResponse join(Long userId, String code) {
-        requireHasPlace(userId);
+        requireProfile(userId);
         requireNotResident(userId);
         Listing listing = listings.findByInviteCode(code.trim().toUpperCase(Locale.ROOT))
                 .orElseThrow(() -> new FieldValidationException(Map.of("code", "Не постои оглас со овој код.")));
@@ -130,7 +134,29 @@ public class ListingService {
             stored.forEach(storage::delete);
             throw e;
         }
-        stored.forEach(name -> listing.getImages().add(new ListingImage(name)));
+        int next = listing.getImages().stream().mapToInt(ListingImage::getPosition).max().orElse(-1) + 1;
+        for (String name : stored) {
+            listing.getImages().add(new ListingImage(name, next++));
+        }
+        listings.flush();
+        return toResponse(listing, userId);
+    }
+
+    /** Makes one photo the main one, shown first on cards and the map. The rest keep their order. */
+    @Transactional
+    public ListingResponse makeCover(Long id, Long userId, Long imageId) {
+        Listing listing = findOwned(id, userId);
+        ListingImage cover = listing.getImages().stream()
+                .filter(candidate -> candidate.getId().equals(imageId))
+                .findFirst()
+                .orElseThrow(ListingService::notFound);
+        List<ListingImage> ordered = new ArrayList<>(listing.getImages());
+        ordered.remove(cover);
+        ordered.addFirst(cover);
+        for (int i = 0; i < ordered.size(); i++) {
+            ordered.get(i).moveTo(i);
+        }
+        listing.getImages().sort(java.util.Comparator.comparingInt(ListingImage::getPosition));
         listings.flush();
         return toResponse(listing, userId);
     }
@@ -154,11 +180,18 @@ public class ListingService {
     private ListingResponse toResponse(Listing l, Long viewerId) {
         boolean resident = l.getResidentIds().contains(viewerId);
         // The owner comes first, the others by name.
-        List<ProfileSummary> residents = profiles.findAllById(l.getResidentIds()).stream()
+        List<Profile> people = profiles.findAllById(l.getResidentIds()).stream()
                 .sorted(Comparator.comparing((Profile p) -> !p.getUserId().equals(l.getOwnerId()))
                         .thenComparing(Profile::getFirstName))
-                .map(ProfileService::toSummary)
                 .toList();
+        List<ProfileSummary> residents = people.stream().map(ProfileService::toSummary).toList();
+        // The owner decides who may move in, so their answer about the roommate's gender applies.
+        Gender roommateGender = people.stream()
+                .filter(p -> p.getUserId().equals(l.getOwnerId()))
+                .filter(p -> p.getRoommateGenderPreference() == GenderPreference.SAME)
+                .map(Profile::getGender)
+                .findFirst()
+                .orElse(null);
         return new ListingResponse(
                 l.getId(),
                 l.getOwnerId(),
@@ -171,19 +204,35 @@ public class ListingService {
                 l.getMonthlyRent(),
                 l.getFreeSpots(),
                 l.getDescription(),
+                ListingDtos.amenities(l.getAmenities()),
                 resident ? l.getInviteCode() : null,
                 l.getImages().stream().map(i -> new ImageResponse(i.getId(), imageUrl(i))).toList(),
-                residents);
+                residents,
+                roommateGender);
+    }
+
+    /** A flat cannot have a yard, nor a house a lift. */
+    private static void checkAmenities(ListingRequest request) {
+        if (request.amenities() == null || request.propertyType() == null) {
+            return;
+        }
+        request.amenities().stream()
+                .filter(amenity -> !amenity.fits(request.propertyType()))
+                .findFirst()
+                .ifPresent(amenity -> {
+                    throw new FieldValidationException(Map.of("amenities",
+                            amenity.getLabel() + " не одговара за " + (request.propertyType() == PropertyType.HOUSE ? "куќа." : "стан.")));
+                });
     }
 
     static String imageUrl(ListingImage image) {
         return "/api/images/" + image.getFileName();
     }
 
-    private void requireHasPlace(Long userId) {
-        Profile profile = profiles.findById(userId).orElse(null);
-        if (profile == null || profile.getSituation() != Situation.HAS_PLACE) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Огласи можат да прават само корисници што имаат стан.");
+    /** Anyone with a completed profile may post a flat or house, whatever they are looking for themselves. */
+    private void requireProfile(Long userId) {
+        if (!profiles.existsById(userId)) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Прво пополни го профилот.");
         }
     }
 

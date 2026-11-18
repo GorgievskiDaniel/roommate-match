@@ -6,6 +6,7 @@ import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
@@ -24,7 +25,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
+import mk.roommatematch.distance.RouteClient;
+import mk.roommatematch.support.RecordingMailer;
+import mk.roommatematch.support.TestAccounts;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -59,8 +62,21 @@ class AiFeaturesIntegrationTest {
     @MockitoBean
     GeminiClient gemini;
 
+    /** Fails by default, so distances fall back to the straight line and tests never call the real service. */
+    @MockitoBean
+    RouteClient routes;
+
+    @org.junit.jupiter.api.BeforeEach
+    void routingServiceIsDown() {
+        when(routes.route(any(), anyDouble(), anyDouble(), anyDouble(), anyDouble()))
+                .thenThrow(new IllegalStateException("no routing in tests"));
+    }
+
     @Autowired
     MockMvc mvc;
+
+    @Autowired
+    RecordingMailer mail;
 
     @Autowired
     ObjectMapper json;
@@ -115,7 +131,7 @@ class AiFeaturesIntegrationTest {
     void dormsInSkopjeAreFoundWhenAskedFor() throws Exception {
         modelAnswers(filters("\"placeKinds\":[\"DORM\"],\"areas\":[\"SKOPJE\"],"));
 
-        search("дом во Скопје").andExpect(jsonPath("$.dormIds", containsInAnyOrder(1, 2)));
+        search("дом во Скопје").andExpect(jsonPath("$.dormIds", containsInAnyOrder(1, 2, 9)));
     }
 
     @Test
@@ -132,6 +148,84 @@ class AiFeaturesIntegrationTest {
         modelAnswers(filters("\"dorms\":[\"ПСД Логос\"],"));
 
         search("логос").andExpect(jsonPath("$.dormIds", contains(8)));
+    }
+
+    @Test
+    void apartmentsAreLimitedToTheDistanceFromTheFaculty() throws Exception {
+        // FINKI is at 42.00410, 21.40974. One flat is about 1 km away, the other about 4.5 km.
+        long close = listing("KARPOSH", "APARTMENT", 120, false, false, 42.0010, 21.4000);
+        long far = listing("AERODROM", "APARTMENT", 120, false, false, 41.9850, 21.4600);
+        modelAnswers(filters("\"placeKinds\":[\"APARTMENT\"],\"nearFaculty\":\"FINKI\",\"maxKm\":3,"));
+
+        search("стан до 3км од ФИНКИ")
+                .andExpect(jsonPath("$.listingIds", hasItem((int) close)))
+                .andExpect(jsonPath("$.listingIds", not(hasItem((int) far))))
+                .andExpect(jsonPath("$.filters", hasItem("До 3 km од ФИНКИ (Скопје)")));
+    }
+
+    @Test
+    void travelTimeOnFootAndByCarAreMeasuredSeparately() throws Exception {
+        // Without the routing service: about 14 minutes on foot to the close flat, 73 to the far one,
+        // and 3 and 12 minutes by car.
+        long close = listing("KARPOSH", "APARTMENT", 120, false, false, 42.0010, 21.4000);
+        long far = listing("AERODROM", "APARTMENT", 120, false, false, 41.9850, 21.4600);
+
+        modelAnswers(filters("\"placeKinds\":[\"APARTMENT\"],\"nearFaculty\":\"FINKI\",\"maxMinutes\":15,"
+                + "\"travelMode\":\"WALKING\","));
+        search("станови 15 минути пеш од ФИНКИ")
+                .andExpect(jsonPath("$.listingIds", hasItem((int) close)))
+                .andExpect(jsonPath("$.listingIds", not(hasItem((int) far))))
+                .andExpect(jsonPath("$.filters", hasItem("До 15 мин. пешки од ФИНКИ (Скопје)")));
+
+        modelAnswers(filters("\"placeKinds\":[\"APARTMENT\"],\"nearFaculty\":\"FINKI\",\"maxMinutes\":15,"
+                + "\"travelMode\":\"DRIVING\","));
+        search("станови 15 минути со кола од ФИНКИ")
+                .andExpect(jsonPath("$.listingIds", hasItem((int) close)))
+                .andExpect(jsonPath("$.listingIds", hasItem((int) far)))
+                .andExpect(jsonPath("$.filters", hasItem("До 15 мин. со кола од ФИНКИ (Скопје)")));
+    }
+
+    @Test
+    void theRoadDistanceDecidesWhenTheRoutingServiceAnswers() throws Exception {
+        long listing = listing("KARPOSH", "APARTMENT", 120, false, false, 42.0010, 21.4000);
+        // A straight kilometre that takes six by road is outside a 3 km limit.
+        org.mockito.Mockito.doReturn(new RouteClient.Route(6000, 4000))
+                .when(routes).route(any(), anyDouble(), anyDouble(), anyDouble(), anyDouble());
+        modelAnswers(filters("\"placeKinds\":[\"APARTMENT\"],\"nearFaculty\":\"FINKI\",\"maxKm\":3,"));
+
+        search("стан до 3км од ФИНКИ").andExpect(jsonPath("$.listingIds", not(hasItem((int) listing))));
+    }
+
+    @Test
+    void theNearestDormToTheFacultyIsTheOnlyOneShown() throws Exception {
+        modelAnswers(filters("\"placeKinds\":[\"DORM\"],\"nearFaculty\":\"FINKI\",\"nearest\":true,"));
+
+        // ДСД Гоце Делчев is the closest to FINKI; the map then shows all of its blocks.
+        search("дом најблиску до ФИНКИ")
+                .andExpect(jsonPath("$.dormIds", contains(1)))
+                .andExpect(jsonPath("$.listingIds").isEmpty())
+                .andExpect(jsonPath("$.filters", containsInAnyOrder("Студентски дом", "Најблиску до ФИНКИ (Скопје)")));
+    }
+
+    @Test
+    void aDistanceAloneFindsDormsAsWellAsListings() throws Exception {
+        long close = listing("KARPOSH", "APARTMENT", 120, false, false, 42.0010, 21.4000);
+        modelAnswers(filters("\"nearFaculty\":\"FINKI\",\"maxKm\":5,"));
+
+        // Гоце Делчев, Стив Наумов and the new dorm in the centre are within 5 km of FINKI; Штип is not.
+        search("најмногу 5км раздалечено од финки")
+                .andExpect(jsonPath("$.listingIds", hasItem((int) close)))
+                .andExpect(jsonPath("$.dormIds", containsInAnyOrder(1, 2, 9)));
+
+        modelAnswers(filters("\"nearFaculty\":\"FINKI\",\"maxKm\":5,\"maxRent\":150,"));
+        search("до 5км од финки до 150 евра").andExpect(jsonPath("$.dormIds").isEmpty());
+    }
+
+    @Test
+    void aDistanceWithoutAFacultyChangesNothing() throws Exception {
+        modelAnswers(filters("\"placeKinds\":[\"DORM\"],\"areas\":[\"STIP\"],\"nearFaculty\":\"НЕПОСТОИ\",\"maxKm\":1,"));
+
+        search("дом во Штип").andExpect(jsonPath("$.dormIds", containsInAnyOrder(5, 7, 8)));
     }
 
     @Test
@@ -190,7 +284,7 @@ class AiFeaturesIntegrationTest {
         explain(viewer, other).andExpect(status().isOk());
         verify(gemini, times(1)).generateText(anyString(), anyString());
 
-        profile.put("tidiness", 1);
+        profile.put("cleaning", "WHEN_POSSIBLE");
         send(put("/api/profile/me"), other, profile).andExpect(status().isOk());
 
         explain(viewer, other).andExpect(status().isOk());
@@ -229,7 +323,28 @@ class AiFeaturesIntegrationTest {
         verify(gemini).generateText(anyString(), input.capture());
         assertThat(input.getValue())
                 .doesNotContain("Уникатноиме", "Другоиме", "Тајниопис", "@students.test", "2003")
-                .contains("sharedHobbies", "tidinessOutOf5");
+                .contains("sharedHobbies", "cleaning", "partnerStays");
+    }
+
+    @Test
+    void modelIsToldTheGenderOfBothStudents() throws Exception {
+        clearInvocations(gemini);
+        when(gemini.generateText(anyString(), anyString())).thenReturn("Текст.");
+        Map<String, Object> first = apartment("Петар", "SEARCH_TOGETHER", "KRATOVO");
+        first.put("gender", "MALE");
+        first.put("roommateGenderPreference", "ANY");
+        Map<String, Object> second = apartment("Симона", "SEARCH_TOGETHER", "KRATOVO");
+        second.put("roommateGenderPreference", "ANY");
+        User viewer = user(first);
+        User other = user(second);
+
+        explain(viewer, other).andExpect(status().isOk());
+
+        ArgumentCaptor<String> input = ArgumentCaptor.forClass(String.class);
+        verify(gemini).generateText(anyString(), input.capture());
+        assertThat(input.getValue())
+                .contains("\"reader\":{\"gender\":\"MALE\"")
+                .contains("\"other\":{\"gender\":\"FEMALE\"");
     }
 
     @Test
@@ -267,6 +382,11 @@ class AiFeaturesIntegrationTest {
     }
 
     private long listing(String area, String type, int rent, boolean smoker, boolean pets) throws Exception {
+        return listing(area, type, rent, smoker, pets, 41.7, 21.5);
+    }
+
+    private long listing(String area, String type, int rent, boolean smoker, boolean pets, double latitude,
+                         double longitude) throws Exception {
         Map<String, Object> profile = apartment("Сопственик", "HAS_PLACE", area);
         profile.put("smoker", smoker);
         profile.put("hasPets", pets);
@@ -275,8 +395,8 @@ class AiFeaturesIntegrationTest {
         listing.put("propertyType", type);
         listing.put("address", "Главна 1");
         listing.put("area", area);
-        listing.put("latitude", 41.7);
-        listing.put("longitude", 21.5);
+        listing.put("latitude", latitude);
+        listing.put("longitude", longitude);
         listing.put("monthlyRent", rent);
         listing.put("freeSpots", 1);
         listing.put("description", "Опис.");
@@ -295,12 +415,7 @@ class AiFeaturesIntegrationTest {
     }
 
     private User user(Map<String, Object> profile) throws Exception {
-        String body = mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(
-                                Map.of("email", UUID.randomUUID() + "@students.test", "password", "lozinka123"))))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        String token = json.readTree(body).get("token").asText();
+        String token = TestAccounts.register(mvc, mail);
         User partial = new User(token, 0);
         send(put("/api/profile/me"), partial, profile).andExpect(status().isOk());
         String me = mvc.perform(get("/api/me").header("Authorization", "Bearer " + token))
@@ -329,9 +444,13 @@ class AiFeaturesIntegrationTest {
         profile.put("smoker", false);
         profile.put("hasPets", false);
         profile.put("guestsFrequency", "RARELY");
-        profile.put("tidiness", 4);
+        profile.put("cleaning", "REGULAR");
         profile.put("sleepSchedule", "FLEXIBLE");
-        profile.put("quietNeed", 3);
+        profile.put("sound", "QUIET_SPEAKER");
+        profile.put("communication", "OCCASIONAL");
+        profile.put("sharing", "BASICS");
+        profile.put("parties", "SMALL");
+        profile.put("partnerStays", "SOMETIMES");
         profile.put("acceptsSmoker", true);
         profile.put("acceptsPets", true);
         profile.put("roommateGenderPreference", "SAME");

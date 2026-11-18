@@ -82,6 +82,11 @@ public class ListingController {
         return service.addImages(id, userId(jwt), images);
     }
 
+    @PutMapping("/{id}/images/{imageId}/cover")
+    ListingResponse makeCover(@AuthenticationPrincipal Jwt jwt, @PathVariable Long id, @PathVariable Long imageId) {
+        return service.makeCover(id, userId(jwt), imageId);
+    }
+
     @DeleteMapping("/{id}/images/{imageId}")
     ListingResponse deleteImage(@PathVariable Long id, @PathVariable Long imageId,
                                 @AuthenticationPrincipal Jwt jwt) {

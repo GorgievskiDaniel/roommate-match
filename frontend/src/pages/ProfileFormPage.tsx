@@ -2,7 +2,9 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, ApiError } from '../api'
 import { useAuth } from '../auth'
-import { LABELS, wantedPlace, type Profile, type ProfileRequest, type Reference, type WantedPlace } from '../types'
+import BirthDatePicker from '../components/BirthDatePicker'
+import FacultyPicker from '../components/FacultyPicker'
+import { LABELS, wantedPlace, type Profile, type ProfileRequest, type Reference, type Situation, type WantedPlace } from '../types'
 
 type Form = { [K in keyof ProfileRequest]: ProfileRequest[K] | null } & { budgetMinText: string; budgetMaxText: string }
 type Errors = Record<string, string>
@@ -11,17 +13,19 @@ const EMPTY: Form = {
   firstName: '', gender: null, birthDate: '', faculty: '', bio: '',
   housingType: null, situation: null, dormId: null, dormRoomOptionId: null, budgetMin: null, budgetMax: null,
   budgetMinText: '', budgetMaxText: '', areas: [], propertyTypes: [],
-  smoker: null, hasPets: null, guestsFrequency: null, tidiness: null, sleepSchedule: null, quietNeed: null,
+  smoker: null, hasPets: null, guestsFrequency: null, cleaning: null, sleepSchedule: null, sound: null,
+  communication: null, sharing: null, parties: null, partnerStays: null,
   acceptsSmoker: null, acceptsPets: null, roommateGenderPreference: null, hobbyIds: [],
 }
 
-const STEPS = ['За тебе', 'Што бараш', 'Навики', 'Цимер и хобиња']
+const STEPS = ['За тебе', 'Што бараш', 'Навики', 'Однос со цимерот', 'Цимер и хобиња']
 
 const STEP_OF_FIELD: Record<string, number> = {
   firstName: 0, gender: 0, birthDate: 0, faculty: 0, bio: 0,
   housingType: 1, propertyTypes: 1, situation: 1, dormId: 1, dormRoomOptionId: 1, budgetMin: 1, budgetMax: 1, areas: 1,
-  smoker: 2, hasPets: 2, guestsFrequency: 2, tidiness: 2, sleepSchedule: 2, quietNeed: 2,
-  acceptsSmoker: 3, acceptsPets: 3, roommateGenderPreference: 3, hobbyIds: 3,
+  smoker: 2, hasPets: 2, guestsFrequency: 2, cleaning: 2, sleepSchedule: 2, sound: 2,
+  communication: 3, sharing: 3, parties: 3, partnerStays: 3,
+  acceptsSmoker: 4, acceptsPets: 4, roommateGenderPreference: 4, hobbyIds: 4,
 }
 
 function validateStep(step: number, f: Form, reference: Reference): Errors {
@@ -45,6 +49,9 @@ function validateStep(step: number, f: Form, reference: Reference): Errors {
     }
     if (f.housingType === 'APARTMENT') {
       need('situation', 'Изберете ја вашата положба.')
+    }
+    // Someone who has a place lists it, so the rent and the location come from the listing.
+    if (f.housingType === 'APARTMENT' && f.situation !== 'HAS_PLACE') {
       if (f.budgetMinText === '') e.budgetMin = 'Внесете најмал буџет.'
       if (f.budgetMaxText === '') e.budgetMax = 'Внесете најголем буџет.'
       if (f.budgetMinText !== '' && f.budgetMaxText !== '' && Number(f.budgetMinText) > Number(f.budgetMaxText)) {
@@ -53,17 +60,29 @@ function validateStep(step: number, f: Form, reference: Reference): Errors {
       if (!f.areas?.length) e.areas = 'Изберете барем една локација.'
     }
   }
+  // Dorms allow neither smoking nor pets, so those questions are only asked for a flat or house.
+  const apartment = f.housingType === 'APARTMENT'
   if (step === 2) {
-    need('smoker', 'Одговорете дали пушите.')
-    need('hasPets', 'Одговорете дали имате миленичиња.')
+    if (apartment) {
+      need('smoker', 'Одговорете дали пушите.')
+      need('hasPets', 'Одговорете дали имате миленичиња.')
+    }
     need('guestsFrequency', 'Изберете колку често викате гости.')
-    need('tidiness', 'Оценете ја уреденоста.')
+    need('cleaning', 'Изберете како би го организирале чистењето.')
     need('sleepSchedule', 'Изберете распоред на спиење.')
-    need('quietNeed', 'Оценете ја потребата за тишина.')
+    need('sound', 'Изберете за музиката и звукот во станот.')
   }
   if (step === 3) {
-    need('acceptsSmoker', 'Одговорете дали прифаќате цимер пушач.')
-    need('acceptsPets', 'Одговорете дали прифаќате цимер со миленичиња.')
+    need('communication', 'Изберете колку сакате да комуницирате со цимерот.')
+    need('sharing', 'Изберете како замислувате делење на работите.')
+    need('parties', 'Изберете што мислите за забави дома.')
+    need('partnerStays', 'Изберете дали партнер може да преноќува.')
+  }
+  if (step === 4) {
+    if (apartment) {
+      need('acceptsSmoker', 'Одговорете дали прифаќате цимер пушач.')
+      need('acceptsPets', 'Одговорете дали прифаќате цимер со миленичиња.')
+    }
     need('roommateGenderPreference', 'Изберете пол на цимерот.')
     if (!f.hobbyIds?.length) e.hobbyIds = 'Изберете барем едно хоби.'
   }
@@ -94,6 +113,40 @@ function Choice<T extends string | number | boolean>(props: {
           </label>
         ))}
       </div>
+      {props.error && <small className="field-error">{props.error}</small>}
+    </fieldset>
+  )
+}
+
+/**
+ * "I have a place" stands alone; the two ways of looking without one can be ticked together, which is
+ * saved as NEEDS_OR_TOGETHER.
+ */
+function SituationChoice(props: { value: Situation | null; onChange: (value: Situation | null) => void; error?: string }) {
+  const needs = props.value === 'NEEDS_PLACE' || props.value === 'NEEDS_OR_TOGETHER'
+  const together = props.value === 'SEARCH_TOGETHER' || props.value === 'NEEDS_OR_TOGETHER'
+  const combine = (n: boolean, t: boolean): Situation | null =>
+    n && t ? 'NEEDS_OR_TOGETHER' : n ? 'NEEDS_PLACE' : t ? 'SEARCH_TOGETHER' : null
+  const options: { key: string; label: string; checked: boolean; toggle: () => void }[] = [
+    { key: 'HAS_PLACE', label: LABELS.situation.HAS_PLACE, checked: props.value === 'HAS_PLACE',
+      toggle: () => props.onChange(props.value === 'HAS_PLACE' ? null : 'HAS_PLACE') },
+    { key: 'NEEDS_PLACE', label: LABELS.situation.NEEDS_PLACE, checked: needs,
+      toggle: () => props.onChange(combine(!needs, props.value === 'HAS_PLACE' ? false : together)) },
+    { key: 'SEARCH_TOGETHER', label: LABELS.situation.SEARCH_TOGETHER, checked: together,
+      toggle: () => props.onChange(combine(props.value === 'HAS_PLACE' ? false : needs, !together)) },
+  ]
+  return (
+    <fieldset className="field" aria-invalid={Boolean(props.error)}>
+      <legend>Која е твојата положба?</legend>
+      <div className="choices">
+        {options.map((option) => (
+          <label key={option.key} className={option.checked ? 'choice selected' : 'choice'}>
+            <input type="checkbox" checked={option.checked} onChange={option.toggle} />
+            {option.label}
+          </label>
+        ))}
+      </div>
+      <small className="muted">Ако немаш стан, можеш да ги избереш двете можности.</small>
       {props.error && <small className="field-error">{props.error}</small>}
     </fieldset>
   )
@@ -137,7 +190,6 @@ function Text(props: { label: string; error?: string; hint?: ReactNode; children
 }
 
 const YES_NO = [{ value: true, label: 'Да' }, { value: false, label: 'Не' }]
-const SCALE = [1, 2, 3, 4, 5].map((value) => ({ value, label: String(value) }))
 const entries = <K extends string>(labels: Record<K, string>) =>
   (Object.keys(labels) as K[]).map((value) => ({ value, label: labels[value] }))
 
@@ -202,6 +254,7 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
       return
     }
     const apartment = form.housingType === 'APARTMENT'
+    const searching = apartment && form.situation !== 'HAS_PLACE'
     const { budgetMinText, budgetMaxText, ...rest } = form
     setSubmitting(true)
     try {
@@ -212,10 +265,14 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
           situation: apartment ? form.situation : null,
           dormId: apartment ? null : form.dormId,
           dormRoomOptionId: apartment ? null : form.dormRoomOptionId,
-          budgetMin: apartment ? Number(budgetMinText) : null,
-          budgetMax: apartment ? Number(budgetMaxText) : null,
-          areas: apartment ? form.areas : [],
+          budgetMin: searching ? Number(budgetMinText) : null,
+          budgetMax: searching ? Number(budgetMaxText) : null,
+          areas: searching ? form.areas : [],
           propertyTypes: apartment ? form.propertyTypes : [],
+          smoker: apartment ? form.smoker : null,
+          hasPets: apartment ? form.hasPets : null,
+          acceptsSmoker: apartment ? form.acceptsSmoker : null,
+          acceptsPets: apartment ? form.acceptsPets : null,
         },
       })
       await refresh()
@@ -258,13 +315,9 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
           </Text>
           <Choice name="gender" legend="Пол" value={form.gender} options={entries(LABELS.gender)}
             onChange={(v) => set('gender', v)} error={errors.gender} />
-          <Text label="Датум на раѓање" error={errors.birthDate}>
-            <input type="date" value={form.birthDate ?? ''} onChange={(e) => set('birthDate', e.target.value)} />
-          </Text>
-          <Text label="Факултет" error={errors.faculty}>
-            <input value={form.faculty ?? ''} maxLength={120} placeholder="на пр. ФИНКИ"
-              onChange={(e) => set('faculty', e.target.value)} />
-          </Text>
+          <BirthDatePicker value={form.birthDate ?? ''} onChange={(v) => set('birthDate', v)} error={errors.birthDate} />
+          <FacultyPicker faculties={reference.faculties ?? []} value={form.faculty ?? ''}
+            onChange={(v) => set('faculty', v)} error={errors.faculty} />
           <Text label="Краток опис (незадолжително)" error={errors.bio} hint={`${(form.bio ?? '').length}/500`}>
             <textarea rows={4} maxLength={500} value={form.bio ?? ''} onChange={(e) => set('bio', e.target.value)} />
           </Text>
@@ -278,7 +331,7 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
             error={errors.housingType ?? errors.propertyTypes} />
           {form.housingType === 'DORM' && (
             <Choice name="dormId" legend="Во кој дом?" value={form.dormId}
-              options={reference.dorms.map((d) => ({ value: d.id, label: d.name }))}
+              options={reference.dorms.map((d) => ({ value: d.id, label: d.openingNote ? `${d.name} (уште не е отворен)` : d.name }))}
               onChange={(v) => { set('dormId', v); set('dormRoomOptionId', null) }} error={errors.dormId} />
           )}
           {form.housingType === 'DORM' && roomOptions.length > 0 && (
@@ -288,8 +341,14 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
           )}
           {form.housingType === 'APARTMENT' && (
             <>
-              <Choice name="situation" legend="Која е твојата положба?" value={form.situation}
-                options={entries(LABELS.situation)} onChange={(v) => set('situation', v)} error={errors.situation} />
+              <SituationChoice value={form.situation} onChange={(v) => set('situation', v)} error={errors.situation} />
+              {form.situation === 'HAS_PLACE' ? (
+                <p className="hint-box">
+                  Кирија и локација не треба да внесуваш: по профилот објави го станот во „Мој оглас“, а совпаѓањата
+                  се прават според киријата и адресата од огласот.
+                </p>
+              ) : (
+              <>
               <div className="field-row">
                 <Text label="Кирија од (€)" error={errors.budgetMin}>
                   <input type="number" min={0} inputMode="numeric" value={form.budgetMinText}
@@ -306,6 +365,8 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
               <MultiChoice legend="Други градови" selected={form.areas ?? []}
                 options={reference.areas.filter((a) => !a.skopje).map((a) => ({ value: a.code, label: a.name }))}
                 onToggle={(v) => set('areas', toggle(form.areas ?? [], v))} error={errors.areas} />
+              </>
+              )}
             </>
           )}
         </>
@@ -313,29 +374,52 @@ export default function ProfileFormPage({ editing = false }: { editing?: boolean
 
       {step === 2 && (
         <>
-          <Choice name="smoker" legend="Дали пушиш?" value={form.smoker} options={YES_NO}
-            onChange={(v) => set('smoker', v)} error={errors.smoker} />
-          <Choice name="hasPets" legend="Дали имаш миленичиња?" value={form.hasPets} options={YES_NO}
-            onChange={(v) => set('hasPets', v)} error={errors.hasPets} />
+          {form.housingType === 'DORM' ? (
+            <p className="notice">Во студентските домови пушењето и миленичињата не се дозволени, па не те прашуваме за нив.</p>
+          ) : (
+            <>
+              <Choice name="smoker" legend="Дали пушиш?" value={form.smoker} options={YES_NO}
+                onChange={(v) => set('smoker', v)} error={errors.smoker} />
+              <Choice name="hasPets" legend="Дали имаш миленичиња?" value={form.hasPets} options={YES_NO}
+                onChange={(v) => set('hasPets', v)} error={errors.hasPets} />
+            </>
+          )}
           <Choice name="guestsFrequency" legend="Колку често викаш гости?" value={form.guestsFrequency}
             options={entries(LABELS.guestsFrequency)} onChange={(v) => set('guestsFrequency', v)}
             error={errors.guestsFrequency} />
-          <Choice name="tidiness" legend="Колку си уреден/а? (1 = малку, 5 = многу)" value={form.tidiness}
-            options={SCALE} onChange={(v) => set('tidiness', v)} error={errors.tidiness} />
+          <Choice name="cleaning" legend="Како би го организирале чистењето?" value={form.cleaning}
+            options={entries(LABELS.cleaning)} onChange={(v) => set('cleaning', v)} error={errors.cleaning} />
           <Choice name="sleepSchedule" legend="Кога легнуваш?" value={form.sleepSchedule}
             options={entries(LABELS.sleepSchedule)} onChange={(v) => set('sleepSchedule', v)}
             error={errors.sleepSchedule} />
-          <Choice name="quietNeed" legend="Колку тишина ти треба? (1 = малку, 5 = многу)" value={form.quietNeed}
-            options={SCALE} onChange={(v) => set('quietNeed', v)} error={errors.quietNeed} />
+          <Choice name="sound" legend="Музика и звук во станот?" value={form.sound}
+            options={entries(LABELS.sound)} onChange={(v) => set('sound', v)} error={errors.sound} />
         </>
       )}
 
       {step === 3 && (
         <>
-          <Choice name="acceptsSmoker" legend="Прифаќаш цимер пушач?" value={form.acceptsSmoker} options={YES_NO}
-            onChange={(v) => set('acceptsSmoker', v)} error={errors.acceptsSmoker} />
-          <Choice name="acceptsPets" legend="Прифаќаш цимер со миленичиња?" value={form.acceptsPets} options={YES_NO}
-            onChange={(v) => set('acceptsPets', v)} error={errors.acceptsPets} />
+          <Choice name="communication" legend="Колку сакаш да комуницираш со цимерот?" value={form.communication}
+            options={entries(LABELS.communication)} onChange={(v) => set('communication', v)} error={errors.communication} />
+          <Choice name="sharing" legend="Како замислуваш делење на работите?" value={form.sharing}
+            options={entries(LABELS.sharing)} onChange={(v) => set('sharing', v)} error={errors.sharing} />
+          <Choice name="parties" legend="Што мислиш за забави дома?" value={form.parties}
+            options={entries(LABELS.parties)} onChange={(v) => set('parties', v)} error={errors.parties} />
+          <Choice name="partnerStays" legend="Партнер да преноќува?" value={form.partnerStays}
+            options={entries(LABELS.partnerStays)} onChange={(v) => set('partnerStays', v)} error={errors.partnerStays} />
+        </>
+      )}
+
+      {step === 4 && (
+        <>
+          {form.housingType !== 'DORM' && (
+            <>
+              <Choice name="acceptsSmoker" legend="Прифаќаш цимер пушач?" value={form.acceptsSmoker} options={YES_NO}
+                onChange={(v) => set('acceptsSmoker', v)} error={errors.acceptsSmoker} />
+              <Choice name="acceptsPets" legend="Прифаќаш цимер со миленичиња?" value={form.acceptsPets} options={YES_NO}
+                onChange={(v) => set('acceptsPets', v)} error={errors.acceptsPets} />
+            </>
+          )}
           <Choice name="genderPreference" legend="Пол на цимерот" value={form.roommateGenderPreference}
             options={entries(LABELS.genderPreference)} onChange={(v) => set('roommateGenderPreference', v)}
             error={errors.roommateGenderPreference} />

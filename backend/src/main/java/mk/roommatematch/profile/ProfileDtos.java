@@ -9,12 +9,18 @@ import jakarta.validation.constraints.Size;
 import java.time.LocalDate;
 import java.util.Set;
 import mk.roommatematch.listing.ListingDtos.PropertyType;
+import mk.roommatematch.profile.ProfileEnums.CleaningStyle;
+import mk.roommatematch.profile.ProfileEnums.CommunicationLevel;
 import mk.roommatematch.profile.ProfileEnums.Gender;
 import mk.roommatematch.profile.ProfileEnums.GenderPreference;
 import mk.roommatematch.profile.ProfileEnums.GuestsFrequency;
 import mk.roommatematch.profile.ProfileEnums.HousingType;
-import mk.roommatematch.profile.ProfileEnums.SleepSchedule;
+import mk.roommatematch.profile.ProfileEnums.PartnerStays;
+import mk.roommatematch.profile.ProfileEnums.PartyAttitude;
+import mk.roommatematch.profile.ProfileEnums.SharingStyle;
 import mk.roommatematch.profile.ProfileEnums.Situation;
+import mk.roommatematch.profile.ProfileEnums.SleepSchedule;
+import mk.roommatematch.profile.ProfileEnums.SoundLevel;
 import mk.roommatematch.reference.Area;
 
 public final class ProfileDtos {
@@ -57,32 +63,38 @@ public final class ProfileDtos {
             Set<Area> areas,
             Set<PropertyType> propertyTypes,
 
-            @NotNull(message = "Одговорете дали пушите.")
+            /** Required for a flat or house only: dorms do not allow smoking or pets. */
             Boolean smoker,
 
-            @NotNull(message = "Одговорете дали имате миленичиња.")
             Boolean hasPets,
 
             @NotNull(message = "Изберете колку често викате гости.")
             GuestsFrequency guestsFrequency,
 
-            @NotNull(message = "Оценете ја уреденоста.")
-            @Min(value = 1, message = "Оценката е од 1 до 5.")
-            @Max(value = 5, message = "Оценката е од 1 до 5.")
-            Integer tidiness,
+            @NotNull(message = "Изберете како би го организирале чистењето.")
+            CleaningStyle cleaning,
 
             @NotNull(message = "Изберете распоред на спиење.")
             SleepSchedule sleepSchedule,
 
-            @NotNull(message = "Оценете ја потребата за тишина.")
-            @Min(value = 1, message = "Оценката е од 1 до 5.")
-            @Max(value = 5, message = "Оценката е од 1 до 5.")
-            Integer quietNeed,
+            @NotNull(message = "Изберете за музиката и звукот во станот.")
+            SoundLevel sound,
 
-            @NotNull(message = "Одговорете дали прифаќате цимер пушач.")
+            @NotNull(message = "Изберете колку сакате да комуницирате со цимерот.")
+            CommunicationLevel communication,
+
+            @NotNull(message = "Изберете како замислувате делење на работите.")
+            SharingStyle sharing,
+
+            @NotNull(message = "Изберете што мислите за забави дома.")
+            PartyAttitude parties,
+
+            @NotNull(message = "Изберете дали партнер може да преноќува.")
+            PartnerStays partnerStays,
+
+            /** Required for a flat or house only, like smoker and hasPets. */
             Boolean acceptsSmoker,
 
-            @NotNull(message = "Одговорете дали прифаќате цимер со миленичиња.")
             Boolean acceptsPets,
 
             @NotNull(message = "Изберете пол на цимерот.")
@@ -108,16 +120,23 @@ public final class ProfileDtos {
             Integer budgetMax,
             Set<Area> areas,
             Set<PropertyType> propertyTypes,
-            boolean smoker,
-            boolean hasPets,
+            /** These four are null for a dorm, where smoking and pets are not allowed. */
+            Boolean smoker,
+            Boolean hasPets,
             GuestsFrequency guestsFrequency,
-            int tidiness,
+            CleaningStyle cleaning,
             SleepSchedule sleepSchedule,
-            int quietNeed,
-            boolean acceptsSmoker,
-            boolean acceptsPets,
+            SoundLevel sound,
+            CommunicationLevel communication,
+            SharingStyle sharing,
+            PartyAttitude parties,
+            PartnerStays partnerStays,
+            Boolean acceptsSmoker,
+            Boolean acceptsPets,
             GenderPreference roommateGenderPreference,
-            Set<Long> hobbyIds) {
+            Set<Long> hobbyIds,
+            /** Null when the student has not added a picture; the page then draws one by gender. */
+            String avatarUrl) {
     }
 
     /** What other students may see about someone: no e-mail and no exact birth date. */
@@ -128,12 +147,18 @@ public final class ProfileDtos {
             int age,
             String faculty,
             String bio,
-            boolean smoker,
-            boolean hasPets,
+            /** Null for a dorm, where smoking and pets are not allowed. */
+            Boolean smoker,
+            Boolean hasPets,
             GuestsFrequency guestsFrequency,
-            int tidiness,
+            CleaningStyle cleaning,
             SleepSchedule sleepSchedule,
-            int quietNeed,
-            Set<String> hobbies) {
+            SoundLevel sound,
+            CommunicationLevel communication,
+            SharingStyle sharing,
+            PartyAttitude parties,
+            PartnerStays partnerStays,
+            Set<String> hobbies,
+            String avatarUrl) {
     }
 }

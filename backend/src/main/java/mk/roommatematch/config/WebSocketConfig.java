@@ -1,8 +1,12 @@
 package mk.roommatematch.config;
 
 import java.security.Principal;
+import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.server.ServerHttpRequest;
+import org.springframework.http.server.ServerHttpResponse;
+import org.springframework.http.server.ServletServerHttpRequest;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.MessagingException;
@@ -15,9 +19,11 @@ import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtException;
+import org.springframework.web.socket.WebSocketHandler;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
+import org.springframework.web.socket.server.HandshakeInterceptor;
 
 /**
  * Delivers new messages to the browser. Sending goes through REST, so the socket only ever
@@ -29,6 +35,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private static final String BEARER = "Bearer ";
     private static final String OWN_QUEUE_PREFIX = "/user/queue/";
+    private static final String COOKIE_TOKEN = "cookieToken";
 
     private final JwtDecoder jwtDecoder;
     private final String[] allowedOrigins;
@@ -41,7 +48,22 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        registry.addEndpoint("/ws").setAllowedOrigins(allowedOrigins);
+        // The browser sends the login cookie with the handshake; it is kept for the CONNECT frame.
+        registry.addEndpoint("/ws").setAllowedOrigins(allowedOrigins).addInterceptors(new HandshakeInterceptor() {
+            @Override
+            public boolean beforeHandshake(ServerHttpRequest request, ServerHttpResponse response,
+                                           WebSocketHandler handler, Map<String, Object> attributes) {
+                if (request instanceof ServletServerHttpRequest servlet) {
+                    SessionCookie.read(servlet.getServletRequest()).ifPresent(token -> attributes.put(COOKIE_TOKEN, token));
+                }
+                return true;
+            }
+
+            @Override
+            public void afterHandshake(ServerHttpRequest request, ServerHttpResponse response,
+                                       WebSocketHandler handler, Exception exception) {
+            }
+        });
     }
 
     @Override
@@ -66,7 +88,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private void check(StompHeaderAccessor accessor) {
         switch (accessor.getCommand()) {
-            case CONNECT, STOMP -> accessor.setUser(authenticate(accessor.getFirstNativeHeader("Authorization")));
+            case CONNECT, STOMP -> accessor.setUser(authenticate(tokenOf(accessor)));
             case SUBSCRIBE -> {
                 String destination = accessor.getDestination();
                 if (accessor.getUser() == null || destination == null || !destination.startsWith(OWN_QUEUE_PREFIX)) {
@@ -79,12 +101,22 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
         }
     }
 
-    private Principal authenticate(String header) {
-        if (header == null || !header.startsWith(BEARER)) {
+    /** The Authorization header of the CONNECT frame, or else the login cookie from the handshake. */
+    private static String tokenOf(StompHeaderAccessor accessor) {
+        String header = accessor.getFirstNativeHeader("Authorization");
+        if (header != null && header.startsWith(BEARER)) {
+            return header.substring(BEARER.length());
+        }
+        Map<String, Object> session = accessor.getSessionAttributes();
+        return session == null ? null : (String) session.get(COOKIE_TOKEN);
+    }
+
+    private Principal authenticate(String token) {
+        if (token == null || token.isBlank()) {
             throw new MessagingException("Missing token");
         }
         try {
-            Jwt jwt = jwtDecoder.decode(header.substring(BEARER.length()));
+            Jwt jwt = jwtDecoder.decode(token);
             String userId = jwt.getSubject();
             return () -> userId;
         } catch (JwtException e) {

@@ -19,10 +19,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 import mk.roommatematch.ai.GeminiClient;
 import mk.roommatematch.distance.RouteClient.Mode;
 import mk.roommatematch.distance.RouteClient.Route;
+import mk.roommatematch.support.RecordingMailer;
+import mk.roommatematch.support.TestAccounts;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -63,6 +64,9 @@ class DistanceIntegrationTest {
 
     @Autowired
     MockMvc mvc;
+
+    @Autowired
+    RecordingMailer mail;
 
     @Autowired
     ObjectMapper json;
@@ -207,12 +211,7 @@ class DistanceIntegrationTest {
 
     /** A user with a place of their own, so the same user can also create a listing. */
     private String token() throws Exception {
-        String body = mvc.perform(post("/api/auth/register").contentType(MediaType.APPLICATION_JSON)
-                        .content(json.writeValueAsString(
-                                Map.of("email", UUID.randomUUID() + "@students.test", "password", "lozinka123"))))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        String token = json.readTree(body).get("token").asText();
+        String token = TestAccounts.register(mvc, mail);
         Map<String, Object> profile = new HashMap<>();
         profile.put("firstName", "Ана");
         profile.put("gender", "FEMALE");
@@ -228,9 +227,13 @@ class DistanceIntegrationTest {
         profile.put("smoker", false);
         profile.put("hasPets", false);
         profile.put("guestsFrequency", "RARELY");
-        profile.put("tidiness", 4);
+        profile.put("cleaning", "REGULAR");
         profile.put("sleepSchedule", "FLEXIBLE");
-        profile.put("quietNeed", 3);
+        profile.put("sound", "QUIET_SPEAKER");
+        profile.put("communication", "OCCASIONAL");
+        profile.put("sharing", "BASICS");
+        profile.put("parties", "SMALL");
+        profile.put("partnerStays", "SOMETIMES");
         profile.put("acceptsSmoker", false);
         profile.put("acceptsPets", false);
         profile.put("roommateGenderPreference", "SAME");

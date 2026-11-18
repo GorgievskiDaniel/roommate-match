@@ -37,7 +37,9 @@ import org.springframework.stereotype.Service;
 public class DocumentIngestionService implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentIngestionService.class);
-    private static final String DORM_FACTS_SOURCE = "__dorm_facts__";
+    static final String DORM_FACTS_SOURCE = "__dorm_facts__";
+    /** Files here are application forms the assistant can hand over; the rest are only read. */
+    static final String FORMS_FOLDER = "obrasci";
     private static final String DORM_FACTS_TITLE = "Основни податоци за домовите";
     private static final Set<String> SUPPORTED = Set.of("txt", "md", "pdf");
     private static final int BATCH_SIZE = 100;
@@ -75,20 +77,24 @@ public class DocumentIngestionService implements ApplicationRunner {
         update(DORM_FACTS_SOURCE, DORM_FACTS_TITLE, dormFacts(), known);
 
         Path folder = Path.of(properties.documentsDir());
-        if (Files.isDirectory(folder)) {
+        for (Path directory : List.of(folder, folder.resolve(FORMS_FOLDER))) {
+            if (!Files.isDirectory(directory)) {
+                continue;
+            }
             List<Path> files;
-            try (Stream<Path> stream = Files.list(folder)) {
+            try (Stream<Path> stream = Files.list(directory)) {
                 files = stream.filter(Files::isRegularFile).filter(DocumentIngestionService::isSupported).sorted().toList();
             }
             for (Path file : files) {
-                String name = file.getFileName().toString();
+                String fileName = file.getFileName().toString();
+                String name = directory.equals(folder) ? fileName : FORMS_FOLDER + "/" + fileName;
                 String text = read(file);
                 if (text.isBlank()) {
                     log.warn("Skipping {}: no text could be read from it", name);
                     continue;
                 }
                 seen.add(name);
-                update(name, titleOf(name), text, known);
+                update(name, titleOf(fileName), text, known);
             }
         }
         for (String source : known.keySet()) {
@@ -123,7 +129,10 @@ public class DocumentIngestionService implements ApplicationRunner {
             StringBuilder text = new StringBuilder(dorm.getName());
             if (dorm.getLatitude() != null && dorm.getLongitude() != null) {
                 Area area = Area.nearestTo(dorm.getLatitude(), dorm.getLongitude());
-                text.append(" е студентски дом во ").append(area.isSkopje() ? "Скопје" : area.getLabel()).append('.');
+                text.append(" е студентски дом во ")
+                        .append(dorm.getNeighbourhood() != null ? dorm.getNeighbourhood() + ", Скопје"
+                                : area.isSkopje() ? "Скопје" : area.getLabel())
+                        .append('.');
             } else {
                 text.append(" е студентски дом.");
             }
@@ -131,6 +140,10 @@ public class DocumentIngestionService implements ApplicationRunner {
                 text.append(" Типови соби: ")
                         .append(String.join(", ", dorm.getRoomOptions().stream().map(DormRoomOption::getName).toList()))
                         .append('.');
+            }
+            String opening = dorm.openingNote(java.time.LocalDate.now());
+            if (opening != null) {
+                text.append(" Сè уште не е во употреба. ").append(opening);
             }
             paragraphs.add(text.toString());
         }

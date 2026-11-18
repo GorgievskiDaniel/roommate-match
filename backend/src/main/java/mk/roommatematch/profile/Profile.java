@@ -19,12 +19,18 @@ import java.util.HashSet;
 import java.util.Set;
 import mk.roommatematch.listing.ListingDtos.PropertyType;
 import mk.roommatematch.profile.ProfileDtos.ProfileRequest;
+import mk.roommatematch.profile.ProfileEnums.CleaningStyle;
+import mk.roommatematch.profile.ProfileEnums.CommunicationLevel;
 import mk.roommatematch.profile.ProfileEnums.Gender;
 import mk.roommatematch.profile.ProfileEnums.GenderPreference;
 import mk.roommatematch.profile.ProfileEnums.GuestsFrequency;
 import mk.roommatematch.profile.ProfileEnums.HousingType;
-import mk.roommatematch.profile.ProfileEnums.SleepSchedule;
+import mk.roommatematch.profile.ProfileEnums.PartnerStays;
+import mk.roommatematch.profile.ProfileEnums.PartyAttitude;
+import mk.roommatematch.profile.ProfileEnums.SharingStyle;
 import mk.roommatematch.profile.ProfileEnums.Situation;
+import mk.roommatematch.profile.ProfileEnums.SleepSchedule;
+import mk.roommatematch.profile.ProfileEnums.SoundLevel;
 import mk.roommatematch.reference.Area;
 import mk.roommatematch.reference.Dorm;
 import mk.roommatematch.reference.DormRoomOption;
@@ -86,12 +92,27 @@ public class Profile {
     @Enumerated(EnumType.STRING)
     private GuestsFrequency guestsFrequency;
 
-    private short tidiness;
+    @Enumerated(EnumType.STRING)
+    private CleaningStyle cleaning;
 
     @Enumerated(EnumType.STRING)
     private SleepSchedule sleepSchedule;
 
-    private short quietNeed;
+    @Enumerated(EnumType.STRING)
+    private SoundLevel sound;
+
+    @Enumerated(EnumType.STRING)
+    private CommunicationLevel communication;
+
+    @Enumerated(EnumType.STRING)
+    private SharingStyle sharing;
+
+    @Enumerated(EnumType.STRING)
+    private PartyAttitude parties;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "partner_stays")
+    private PartnerStays partnerStays;
 
     private boolean acceptsSmoker;
 
@@ -106,6 +127,9 @@ public class Profile {
             joinColumns = @JoinColumn(name = "user_id"),
             inverseJoinColumns = @JoinColumn(name = "hobby_id"))
     private Set<Hobby> hobbies = new HashSet<>();
+
+    /** The stored file name of the student's own picture, or null for the drawing. */
+    private String avatar;
 
     @Column(insertable = false, updatable = false)
     private Instant createdAt;
@@ -132,26 +156,43 @@ public class Profile {
         situation = apartment ? request.situation() : null;
         dorm = apartment ? null : chosenDorm;
         dormRoomOption = apartment ? null : chosenRoomOption;
-        budgetMin = apartment ? request.budgetMin() : null;
-        budgetMax = apartment ? request.budgetMax() : null;
+        // Someone who has a place lists it: the rent and the location come from the listing.
+        boolean searching = apartment && situation != Situation.HAS_PLACE;
+        budgetMin = searching ? request.budgetMin() : null;
+        budgetMax = searching ? request.budgetMax() : null;
         areas.clear();
         propertyTypes.clear();
         if (apartment) {
-            areas.addAll(request.areas());
             propertyTypes.addAll(request.propertyTypes());
         }
-        smoker = request.smoker();
-        hasPets = request.hasPets();
+        if (searching) {
+            areas.addAll(request.areas());
+        }
+        // Dorms do not allow smoking or pets, so for them these answers are not asked and stay false.
+        smoker = apartment && Boolean.TRUE.equals(request.smoker());
+        hasPets = apartment && Boolean.TRUE.equals(request.hasPets());
         guestsFrequency = request.guestsFrequency();
-        tidiness = request.tidiness().shortValue();
+        cleaning = request.cleaning();
         sleepSchedule = request.sleepSchedule();
-        quietNeed = request.quietNeed().shortValue();
-        acceptsSmoker = request.acceptsSmoker();
-        acceptsPets = request.acceptsPets();
+        sound = request.sound();
+        communication = request.communication();
+        sharing = request.sharing();
+        parties = request.parties();
+        partnerStays = request.partnerStays();
+        acceptsSmoker = apartment && Boolean.TRUE.equals(request.acceptsSmoker());
+        acceptsPets = apartment && Boolean.TRUE.equals(request.acceptsPets());
         roommateGenderPreference = request.roommateGenderPreference();
         hobbies.clear();
         hobbies.addAll(chosenHobbies);
         updatedAt = Instant.now();
+    }
+
+    public String getAvatar() {
+        return avatar;
+    }
+
+    public void setAvatar(String avatar) {
+        this.avatar = avatar;
     }
 
     public Long getUserId() {
@@ -222,16 +263,32 @@ public class Profile {
         return guestsFrequency;
     }
 
-    public int getTidiness() {
-        return tidiness;
+    public CleaningStyle getCleaning() {
+        return cleaning;
     }
 
     public SleepSchedule getSleepSchedule() {
         return sleepSchedule;
     }
 
-    public int getQuietNeed() {
-        return quietNeed;
+    public SoundLevel getSound() {
+        return sound;
+    }
+
+    public CommunicationLevel getCommunication() {
+        return communication;
+    }
+
+    public SharingStyle getSharing() {
+        return sharing;
+    }
+
+    public PartyAttitude getParties() {
+        return parties;
+    }
+
+    public PartnerStays getPartnerStays() {
+        return partnerStays;
     }
 
     public boolean isAcceptsSmoker() {

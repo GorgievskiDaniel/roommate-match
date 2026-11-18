@@ -1,5 +1,6 @@
 package mk.roommatematch.matching;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -12,7 +13,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
+import mk.roommatematch.support.RecordingMailer;
+import mk.roommatematch.support.TestAccounts;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -46,6 +48,9 @@ class MatchIntegrationTest {
     MockMvc mvc;
 
     @Autowired
+    RecordingMailer mail;
+
+    @Autowired
     ObjectMapper json;
 
     @Test
@@ -60,7 +65,7 @@ class MatchIntegrationTest {
         String token = user(me);
         Map<String, Object> worse = apartment("SEARCH_TOGETHER", "VINICA");
         worse.put("firstName", "Послаб");
-        worse.put("tidiness", 1);
+        worse.put("cleaning", "WHEN_POSSIBLE");
         worse.put("guestsFrequency", "OFTEN");
         user(worse);
         Map<String, Object> better = apartment("SEARCH_TOGETHER", "VINICA");
@@ -85,6 +90,7 @@ class MatchIntegrationTest {
                 .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
         long id = listing.get("id").asLong();
 
+        // The rent and the place come from the listing; without a photo it is not shown yet.
         authed(get("/api/matches"), seeker)
                 .andExpect(jsonPath("$[0].listingId").isEmpty())
                 .andExpect(jsonPath("$[0].score.rent").value(100));
@@ -96,17 +102,121 @@ class MatchIntegrationTest {
     }
 
     @Test
-    void goceDelcevHalvesScoreForDifferentRoomTypeButStivNaumovDoesNot() throws Exception {
-        JsonNode dorms = json.readTree(authed(get("/api/reference"), user(apartment("SEARCH_TOGETHER", "PEHCEVO")))
-                .andReturn().getResponse().getContentAsString()).get("dorms");
+    void inGoceDelcevADifferentRoomTypeKeepsTheScoreButComesLast() throws Exception {
+        JsonNode goce = dorms().get(0);
+        long dormId = goce.get("id").asLong();
+        long room = goce.get("roomOptions").get(0).get("id").asLong();
+        long otherRoom = goce.get("roomOptions").get(1).get("id").asLong();
+        String token = user(dormProfile(dormId, room));
+        // Different faculties, so only the room type and habits tell them apart.
+        Map<String, Object> differentRoom = dormProfile(dormId, otherRoom);
+        differentRoom.put("firstName", "Друга соба");
+        differentRoom.put("faculty", "ФЕИТ");
+        user(differentRoom);
+        Map<String, Object> sameRoom = dormProfile(dormId, room);
+        sameRoom.put("firstName", "Иста соба");
+        sameRoom.put("faculty", "ФЕИТ");
+        sameRoom.put("cleaning", "WHEN_POSSIBLE");
+        user(sameRoom);
 
-        assertDormScore(dorms.get(0), 50, true);
-        assertDormScore(dorms.get(1), 100, false);
+        JsonNode matches = json.readTree(authed(get("/api/matches"), token)
+                .andReturn().getResponse().getContentAsString());
+        int same = indexOf(matches, "Иста соба");
+        int different = indexOf(matches, "Друга соба");
+
+        assertThat(matches.get(different).get("score").get("total").asInt()).isEqualTo(100);
+        assertThat(matches.get(different).get("score").get("differentRoomType").asBoolean()).isTrue();
+        assertThat(matches.get(same).get("score").get("total").asInt()).isLessThan(100);
+        assertThat(same).isLessThan(different);
+    }
+
+    @Test
+    void stivNaumovDoesNotCareAboutTheRoomType() throws Exception {
+        assertDormScore(dorms().get(1), 100, false);
+    }
+
+    @Test
+    void blockedStudentsDisappearFromEachOthersMatches() throws Exception {
+        String me = user(apartment("SEARCH_TOGETHER", "DEMIR_HISAR"));
+        String other = user(apartment("SEARCH_TOGETHER", "DEMIR_HISAR"));
+        authed(get("/api/matches"), me).andExpect(jsonPath("$.length()").value(1));
+
+        authed(post("/api/blocks/" + id(other)), me).andExpect(status().isNoContent());
+
+        authed(get("/api/matches"), me).andExpect(jsonPath("$.length()").value(0));
+        authed(get("/api/matches"), other).andExpect(jsonPath("$.length()").value(0));
+        authed(get("/api/matches/" + id(me) + "/explanation"), other).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void aListingOfSomeoneWhoNeedsAPlaceIsNotOfferedToOthers() throws Exception {
+        String needs = user(apartment("NEEDS_PLACE", "KRATOVO"));
+        String owner = user(apartment("HAS_PLACE", "KRATOVO"));
+        send(post("/api/listings"), owner, listing("KRATOVO")).andExpect(status().isCreated());
+        Map<String, Object> expensive = listing("KRATOVO");
+        expensive.put("monthlyRent", 1000);
+        JsonNode listing = json.readTree(send(post("/api/listings"), needs, expensive)
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString());
+        MockMultipartFile image = new MockMultipartFile("images", "stan.png", "image/png", PNG);
+        authed(multipart("/api/listings/" + listing.get("id").asLong() + "/images").file(image), needs)
+                .andExpect(status().isOk());
+
+        // The rent of that listing would be far over the owner's budget; it is not what the student offers.
+        authed(get("/api/matches"), owner)
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].listingId").isEmpty())
+                .andExpect(jsonPath("$[0].score.rent").value(100));
+    }
+
+    @Test
+    void aRentMoreThanTwentyPercentOverTheBudgetIsNoMatch() throws Exception {
+        String seeker = user(apartment("NEEDS_PLACE", "KRUSEVO"));
+        String owner = user(apartment("HAS_PLACE", "KRUSEVO"));
+        Map<String, Object> place = listing("KRUSEVO");
+        place.put("monthlyRent", 241);
+        send(post("/api/listings"), owner, place).andExpect(status().isCreated());
+
+        authed(get("/api/matches"), seeker).andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void someoneWithAPlaceGivesNoRentOrAreasAndIsMatchedOnceTheListingIsUp() throws Exception {
+        String seeker = user(apartment("NEEDS_PLACE", "KICEVO"));
+        Map<String, Object> owner = apartment("HAS_PLACE", "KICEVO");
+        owner.remove("budgetMin");
+        owner.remove("budgetMax");
+        owner.put("areas", List.of());
+        String ownerToken = user(owner);
+        authed(get("/api/profile/me"), ownerToken)
+                .andExpect(jsonPath("$.budgetMin").isEmpty())
+                .andExpect(jsonPath("$.areas.length()").value(0));
+
+        authed(get("/api/matches"), seeker).andExpect(jsonPath("$.length()").value(0));
+
+        send(post("/api/listings"), ownerToken, listing("KICEVO")).andExpect(status().isCreated());
+
+        authed(get("/api/matches"), seeker)
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].areas[0]").exists())
+                .andExpect(jsonPath("$[0].score.rent").value(100));
+    }
+
+    @Test
+    void studentsOfTheSameFacultyAreToldSo() throws Exception {
+        Map<String, Object> me = apartment("SEARCH_TOGETHER", "KRIVA_PALANKA");
+        String token = user(me);
+        Map<String, Object> classmate = apartment("SEARCH_TOGETHER", "KRIVA_PALANKA");
+        classmate.put("faculty", "Факултет за информатички науки и компјутерско инженерство (ФИНКИ), Скопје");
+        user(classmate);
+
+        authed(get("/api/matches"), token).andExpect(jsonPath("$[0].score.sameFaculty").value(true));
     }
 
     private void assertDormScore(JsonNode dorm, int expected, boolean differs) throws Exception {
         Map<String, Object> a = dormProfile(dorm.get("id").asLong(), dorm.get("roomOptions").get(0).get("id").asLong());
         Map<String, Object> b = dormProfile(dorm.get("id").asLong(), dorm.get("roomOptions").get(1).get("id").asLong());
+        // Different faculties, so only the room type changes the score.
+        b.put("faculty", "ФЕИТ");
         String token = user(a);
         user(b);
 
@@ -116,12 +226,27 @@ class MatchIntegrationTest {
                 .andExpect(jsonPath("$[0].score.rent").isEmpty());
     }
 
+    private JsonNode dorms() throws Exception {
+        return json.readTree(authed(get("/api/reference"), user(apartment("SEARCH_TOGETHER", "PEHCEVO")))
+                .andReturn().getResponse().getContentAsString()).get("dorms");
+    }
+
+    private long id(String token) throws Exception {
+        return json.readTree(authed(get("/api/me"), token).andReturn().getResponse().getContentAsString())
+                .get("id").asLong();
+    }
+
+    private static int indexOf(JsonNode matches, String firstName) {
+        for (int i = 0; i < matches.size(); i++) {
+            if (firstName.equals(matches.get(i).get("profile").get("firstName").asText())) {
+                return i;
+            }
+        }
+        throw new AssertionError(firstName + " is not among the matches");
+    }
+
     private String register() throws Exception {
-        String body = send(post("/api/auth/register"), null,
-                Map.of("email", UUID.randomUUID() + "@students.test", "password", "lozinka123"))
-                .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        return json.readTree(body).get("token").asText();
+        return TestAccounts.register(mvc, mail);
     }
 
     private String user(Map<String, Object> profile) throws Exception {
@@ -184,9 +309,13 @@ class MatchIntegrationTest {
         profile.put("smoker", false);
         profile.put("hasPets", false);
         profile.put("guestsFrequency", "RARELY");
-        profile.put("tidiness", 4);
+        profile.put("cleaning", "REGULAR");
         profile.put("sleepSchedule", "FLEXIBLE");
-        profile.put("quietNeed", 3);
+        profile.put("sound", "QUIET_SPEAKER");
+        profile.put("communication", "OCCASIONAL");
+        profile.put("sharing", "BASICS");
+        profile.put("parties", "SMALL");
+        profile.put("partnerStays", "SOMETIMES");
         profile.put("acceptsSmoker", false);
         profile.put("acceptsPets", false);
         profile.put("roommateGenderPreference", "SAME");

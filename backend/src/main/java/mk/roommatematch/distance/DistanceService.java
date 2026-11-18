@@ -71,8 +71,11 @@ public class DistanceService {
     }
 
     /** Straight-line distance narrows the field, then real routes decide among the closest dorms. */
-    Optional<NearestDorm> nearestDorm(Faculty faculty) {
+    public Optional<NearestDorm> nearestDorm(Faculty faculty) {
+        // A dorm still being built is no answer to where a student can live now.
+        java.time.LocalDate today = java.time.LocalDate.now();
         return dorms.findAll().stream()
+                .filter(dorm -> dorm.isOpen(today))
                 .filter(dorm -> dorm.getLatitude() != null && dorm.getLongitude() != null)
                 .sorted(Comparator.comparingDouble(dorm -> straightLineKm(dorm.getLatitude(), dorm.getLongitude(), faculty)))
                 .limit(NEAREST_CANDIDATES)
@@ -99,7 +102,33 @@ public class DistanceService {
         return new Trip(Math.round(route.meters() / 100) / 10.0, Math.max(1, (int) Math.round(route.seconds() / 60)));
     }
 
-    private static double straightLineKm(double latitude, double longitude, Faculty faculty) {
+    /**
+     * The walking distance by road, for limits such as "до 5 km од ФИНКИ". When the routing service
+     * does not answer, the straight line stands in, which is never longer than the road.
+     */
+    public double walkingKm(double latitude, double longitude, Faculty faculty) {
+        try {
+            return routes.route(Mode.WALKING, latitude, longitude, faculty.getLatitude(), faculty.getLongitude())
+                    .meters() / 1000;
+        } catch (RuntimeException e) {
+            return straightLineKm(latitude, longitude, faculty);
+        }
+    }
+
+    /**
+     * Minutes on foot or by car. When the routing service does not answer, the time is estimated from
+     * the straight line, a third longer for the streets, at 5 km/h on foot or 30 km/h in town by car.
+     */
+    public double minutes(Mode mode, double latitude, double longitude, Faculty faculty) {
+        try {
+            return routes.route(mode, latitude, longitude, faculty.getLatitude(), faculty.getLongitude()).seconds() / 60;
+        } catch (RuntimeException e) {
+            double km = straightLineKm(latitude, longitude, faculty) * 1.3;
+            return km / (mode == Mode.WALKING ? 5 : 30) * 60;
+        }
+    }
+
+    public static double straightLineKm(double latitude, double longitude, Faculty faculty) {
         double north = Math.toRadians(faculty.getLatitude() - latitude);
         double east = Math.toRadians(faculty.getLongitude() - longitude);
         double h = Math.pow(Math.sin(north / 2), 2)

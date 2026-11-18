@@ -8,7 +8,9 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import java.util.List;
+import java.util.Set;
 import mk.roommatematch.profile.ProfileDtos.ProfileSummary;
+import mk.roommatematch.profile.ProfileEnums.Gender;
 import mk.roommatematch.reference.Area;
 
 public final class ListingDtos {
@@ -51,13 +53,23 @@ public final class ListingDtos {
 
             @NotBlank(message = "Опишете го станот.")
             @Size(max = 1000, message = "Описот може да има најмногу 1000 знаци.")
-            String description) {
+            String description,
+
+            /** What the place offers; left out means nothing is listed. */
+            Set<Amenity> amenities) {
     }
 
     public record JoinRequest(@NotBlank(message = "Внесете код.") String code) {
     }
 
     public record ImageResponse(Long id, String url) {
+    }
+
+    public record AmenityResponse(Amenity code, String label) {
+    }
+
+    public static List<AmenityResponse> amenities(Set<Amenity> amenities) {
+        return amenities.stream().sorted().map(a -> new AmenityResponse(a, a.getLabel())).toList();
     }
 
     public record ListingResponse(
@@ -72,9 +84,13 @@ public final class ListingDtos {
             int monthlyRent,
             int freeSpots,
             String description,
+            /** In the order of the list of amenities, as labels for people to read. */
+            List<AmenityResponse> amenities,
             /** Only residents get the code, so only they can invite someone. */
             String inviteCode,
             List<ImageResponse> images,
-            List<ProfileSummary> residents) {
+            List<ProfileSummary> residents,
+            /** The gender the owner wants a roommate of; null when the owner does not mind. */
+            Gender roommateGender) {
     }
 }

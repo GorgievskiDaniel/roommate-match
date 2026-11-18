@@ -72,9 +72,10 @@ public class ChatService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Корисникот не постои.");
         }
         requireNotBlocked(userId, otherId);
-        Conversation conversation = conversations
-                .findByUserLowIdAndUserHighId(Math.min(userId, otherId), Math.max(userId, otherId))
-                .orElseGet(() -> conversations.save(new Conversation(userId, otherId)));
+        long low = Math.min(userId, otherId);
+        long high = Math.max(userId, otherId);
+        conversations.createIfMissing(low, high);
+        Conversation conversation = conversations.findByUserLowIdAndUserHighId(low, high).orElseThrow();
         return describe(conversation, userId);
     }
 

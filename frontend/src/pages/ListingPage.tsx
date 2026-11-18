@@ -5,9 +5,16 @@ import { Link } from 'react-router-dom'
 import { MapContainer, Marker, TileLayer, useMapEvents } from 'react-leaflet'
 import { api, ApiError } from '../api'
 import { useAuth } from '../auth'
+import AddressField, { type AddressSuggestion } from '../components/AddressField'
+import DormPostEditor from '../components/DormPostEditor'
 import MapView, { type View } from '../components/MapView'
 import PersonCard from '../components/PersonCard'
-import { LABELS, type Listing, type Profile, type PropertyType, type Reference } from '../types'
+import { AMENITIES, LABELS, type AmenityCode, type Listing, type Profile, type PropertyType, type Reference } from '../types'
+
+const fits = (code: AmenityCode, type: PropertyType) => {
+  const only = AMENITIES.find((amenity) => amenity.code === code)?.only
+  return !only || only === type
+}
 
 const MACEDONIA: [number, number] = [41.6, 21.7]
 const PICKED_PIN = L.divIcon({ className: '', html: '<span class="pin pin-listing">Тука</span>', iconSize: [0, 0] })
@@ -21,11 +28,12 @@ interface Draft {
   monthlyRent: string
   freeSpots: string
   description: string
+  amenities: AmenityCode[]
 }
 
 const EMPTY: Draft = {
   propertyType: null, address: '', area: null, latitude: null, longitude: null,
-  monthlyRent: '', freeSpots: '1', description: '',
+  monthlyRent: '', freeSpots: '1', description: '', amenities: [],
 }
 
 function ClickToPick({ onPick }: { onPick: (latitude: number, longitude: number) => void }) {
@@ -36,12 +44,39 @@ function ClickToPick({ onPick }: { onPick: (latitude: number, longitude: number)
 function ListingForm(props: { reference: Reference; existing: Listing | null; onSaved: (listing: Listing) => void; onCancel?: () => void }) {
   const { existing } = props
   const [draft, setDraft] = useState<Draft>(existing
-    ? { ...existing, monthlyRent: String(existing.monthlyRent), freeSpots: String(existing.freeSpots) }
+    ? {
+        ...existing,
+        monthlyRent: String(existing.monthlyRent),
+        freeSpots: String(existing.freeSpots),
+        amenities: existing.amenities.map((amenity) => amenity.code),
+      }
     : EMPTY)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [formError, setFormError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [view, setView] = useState<View | null>(null)
+  // After an address is picked: is its point on the map right? "no" asks for a click on the map.
+  const [placement, setPlacement] = useState<'asking' | 'yes' | 'no' | null>(null)
+
+  function pickAddress(suggestion: AddressSuggestion) {
+    // The area the point falls in, unless one is already chosen.
+    let nearest = props.reference.areas[0]
+    for (const area of props.reference.areas) {
+      const distance = (area.latitude - suggestion.latitude) ** 2 + (area.longitude - suggestion.longitude) ** 2
+      if (distance < (nearest.latitude - suggestion.latitude) ** 2 + (nearest.longitude - suggestion.longitude) ** 2) {
+        nearest = area
+      }
+    }
+    setDraft((current) => ({
+      ...current,
+      address: suggestion.label,
+      latitude: suggestion.latitude,
+      longitude: suggestion.longitude,
+      area: current.area ?? nearest?.code ?? null,
+    }))
+    setView({ center: [suggestion.latitude, suggestion.longitude], zoom: 17 })
+    setPlacement('asking')
+  }
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setDraft((current) => ({ ...current, [key]: value }))
   const picked: [number, number] | null = draft.latitude !== null && draft.longitude !== null
@@ -72,14 +107,19 @@ function ListingForm(props: { reference: Reference; existing: Listing | null; on
 
   return (
     <form className="card listing-form" onSubmit={submit} noValidate>
-      <h2>{existing ? 'Измени го огласот' : 'Нов оглас за твојот стан'}</h2>
+      <h2>{existing ? 'Измени го огласот' : 'Нов оглас за стан или куќа'}</h2>
       {formError && <p role="alert" className="form-error">{formError}</p>}
       <fieldset className="field">
         <legend>Тип на живеалиште</legend>
         <div className="choices">
           {(Object.keys(LABELS.propertyType) as PropertyType[]).map((type) => (
             <label key={type} className={draft.propertyType === type ? 'choice selected' : 'choice'}>
-              <input type="radio" name="propertyType" checked={draft.propertyType === type} onChange={() => set('propertyType', type)} />
+              <input type="radio" name="propertyType" checked={draft.propertyType === type} onChange={() => setDraft((current) => ({
+                ...current,
+                propertyType: type,
+                // A flat has no yard and a house no lift, so those choices go when the type changes.
+                amenities: current.amenities.filter((code) => fits(code, type)),
+              }))} />
               {LABELS.propertyType[type]}
             </label>
           ))}
@@ -103,12 +143,7 @@ function ListingForm(props: { reference: Reference; existing: Listing | null; on
           {!skopje && errors.area && <small className="field-error">{errors.area}</small>}
         </fieldset>
       ))}
-      <label className="field">
-        <span>Адреса</span>
-        <input value={draft.address} maxLength={200} onChange={(e) => set('address', e.target.value)} />
-        <small className="muted">Адресата и точната локација се видливи за сите најавени корисници.</small>
-        {errors.address && <small className="field-error">{errors.address}</small>}
-      </label>
+      <AddressField value={draft.address} onChange={(value) => set('address', value)} onPick={pickAddress} error={errors.address} />
       <div className="field">
         <span className="field-label">Локација: кликни на твојот стан на мапата</span>
         <div className="picker-frame">
@@ -118,10 +153,25 @@ function ListingForm(props: { reference: Reference; existing: Listing | null; on
               url="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             <MapView view={view} />
-            <ClickToPick onPick={(latitude, longitude) => setDraft((current) => ({ ...current, latitude, longitude }))} />
+            <ClickToPick onPick={(latitude, longitude) => {
+              setDraft((current) => ({ ...current, latitude, longitude }))
+              if (placement === 'no' || placement === 'asking') setPlacement('yes')
+            }} />
             {picked && <Marker position={picked} icon={PICKED_PIN} />}
           </MapContainer>
         </div>
+        {placement === 'asking' && (
+          <div className="placement-check" role="group" aria-label="Проверка на локацијата">
+            <span>Дали адресата ја прикажува точно на мапата?</span>
+            <div className="placement-buttons">
+              <button type="button" className="button secondary" onClick={() => setPlacement('yes')}>Да</button>
+              <button type="button" className="button secondary" onClick={() => setPlacement('no')}>Не</button>
+            </div>
+          </div>
+        )}
+        {placement === 'no' && (
+          <p role="alert" className="notice">Ве молиме одберете ја точно адресата на мапата.</p>
+        )}
         {(errors.latitude || errors.longitude) && <small className="field-error">{errors.latitude ?? errors.longitude}</small>}
       </div>
       <div className="field-row">
@@ -136,6 +186,23 @@ function ListingForm(props: { reference: Reference; existing: Listing | null; on
           {errors.freeSpots && <small className="field-error">{errors.freeSpots}</small>}
         </label>
       </div>
+      <fieldset className="field">
+        <legend>Што нуди</legend>
+        <div className="choices">
+          {AMENITIES.filter((amenity) => !draft.propertyType || fits(amenity.code, draft.propertyType)).map((amenity) => {
+            const checked = draft.amenities.includes(amenity.code)
+            return (
+              <label key={amenity.code} className={checked ? 'choice selected' : 'choice'}>
+                <input type="checkbox" checked={checked} onChange={() => set('amenities', checked
+                  ? draft.amenities.filter((code) => code !== amenity.code)
+                  : [...draft.amenities, amenity.code])} />
+                {amenity.label}
+              </label>
+            )
+          })}
+        </div>
+        {errors.amenities && <small className="field-error">{errors.amenities}</small>}
+      </fieldset>
       <label className="field">
         <span>Опис</span>
         <textarea rows={5} maxLength={1000} value={draft.description} onChange={(e) => set('description', e.target.value)} />
@@ -211,7 +278,11 @@ function ListingManager(props: { listing: Listing; userId: number; onChange: (li
         <div>
           <p className="eyebrow">Мој оглас</p>
           <h1>{LABELS.propertyType[listing.propertyType]} во {listing.areaName}</h1>
-          <p className="muted">{listing.address} · {listing.monthlyRent} € по цимер</p>
+          <p className="muted">
+            {listing.address} · {listing.monthlyRent} € по цимер
+            {listing.amenities.length > 0 && ` · ${listing.amenities.map((amenity) => amenity.label.toLowerCase()).join(', ')}`}
+          </p>
+          <Link to={`/listings/${listing.id}`}>Види како го гледаат другите</Link>
         </div>
         {isOwner && <button type="button" className="button secondary" onClick={props.onEdit}>Измени</button>}
       </div>
@@ -223,14 +294,25 @@ function ListingManager(props: { listing: Listing; userId: number; onChange: (li
 
       <section className="card">
         <h2>Слики</h2>
+        {isOwner && listing.images.length > 1 && (
+          <p className="muted">Главната слика е првата што ја гледаат другите, на картичката и на мапата.</p>
+        )}
         <div className="image-grid">
-          {listing.images.map((image) => (
-            <figure key={image.id}>
-              <img src={image.url} alt="Слика од станот" />
+          {listing.images.map((image, index) => (
+            <figure key={image.id} className={index === 0 ? 'main-photo' : undefined}>
+              <img src={image.url} alt={index === 0 ? 'Главна слика од станот' : 'Слика од станот'} />
+              {index === 0 && <span className="main-photo-badge">Главна</span>}
               {isOwner && (
-                <button type="button" className="link-button" onClick={() => void run(() => api<Listing>(`/listings/${listing.id}/images/${image.id}`, { method: 'DELETE' }))}>
-                  Избриши
-                </button>
+                <div className="image-actions">
+                  {index > 0 && (
+                    <button type="button" className="link-button" onClick={() => void run(() => api<Listing>(`/listings/${listing.id}/images/${image.id}/cover`, { method: 'PUT' }))}>
+                      Постави како главна
+                    </button>
+                  )}
+                  <button type="button" className="link-button" onClick={() => void run(() => api<Listing>(`/listings/${listing.id}/images/${image.id}`, { method: 'DELETE' }))}>
+                    Избриши
+                  </button>
+                </div>
               )}
             </figure>
           ))}
@@ -284,6 +366,7 @@ export default function ListingPage() {
   const [state, setState] = useState<{ profile: Profile; reference: Reference; listing: Listing | null } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [editing, setEditing] = useState(false)
+  const [chosenTab, setChosenTab] = useState<'place' | 'dorm' | null>(null)
 
   useEffect(() => {
     let active = true
@@ -307,25 +390,33 @@ export default function ListingPage() {
     setState({ ...state, listing })
   }
 
-  if (state.listing && !editing) {
-    return <ListingManager listing={state.listing} userId={user.id} onChange={setListing} onEdit={() => setEditing(true)} />
-  }
-  if (state.listing) {
-    return <ListingForm reference={state.reference} existing={state.listing} onSaved={setListing} onCancel={() => setEditing(false)} />
-  }
-  if (state.profile.situation !== 'HAS_PLACE') {
-    return (
-      <div className="card narrow">
-        <h1>Огласите се за оние што имаат стан</h1>
-        <p className="muted">Ако имаш стан и бараш цимер, смени ја положбата во профилот.</p>
-        <Link to="/profile/edit" className="button secondary">Измени го профилот</Link>
-      </div>
-    )
-  }
+  // Everyone may post either kind of ad; the tab opens on the one that fits the profile.
+  const tab = chosenTab ?? (state.profile.housingType === 'DORM' ? 'dorm' : 'place')
+
   return (
-    <div className="listing-start">
-      <ListingForm reference={state.reference} existing={null} onSaved={setListing} />
-      <JoinForm onJoined={setListing} />
+    <div className="my-ads">
+      <div className="ad-tabs" role="tablist" aria-label="Вид на оглас">
+        <button type="button" role="tab" aria-selected={tab === 'place'} className={tab === 'place' ? 'ad-tab selected' : 'ad-tab'}
+          onClick={() => setChosenTab('place')}>
+          Стан или куќа
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'dorm'} className={tab === 'dorm' ? 'ad-tab selected' : 'ad-tab'}
+          onClick={() => setChosenTab('dorm')}>
+          Соба во студентски дом
+        </button>
+      </div>
+      {tab === 'dorm' ? (
+        <DormPostEditor dorms={state.reference.dorms} defaultDormId={state.profile.dormId} />
+      ) : state.listing && !editing ? (
+        <ListingManager listing={state.listing} userId={user.id} onChange={setListing} onEdit={() => setEditing(true)} />
+      ) : state.listing ? (
+        <ListingForm reference={state.reference} existing={state.listing} onSaved={setListing} onCancel={() => setEditing(false)} />
+      ) : (
+        <div className="listing-start">
+          <ListingForm reference={state.reference} existing={null} onSaved={setListing} />
+          <JoinForm onJoined={setListing} />
+        </div>
+      )}
     </div>
   )
 }

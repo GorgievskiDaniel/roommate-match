@@ -9,7 +9,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Collectors;
 import mk.roommatematch.common.FieldValidationException;
-import mk.roommatematch.listing.ListingRepository;
+import mk.roommatematch.listing.ImageStorage;
 import mk.roommatematch.profile.ProfileDtos.ProfileRequest;
 import mk.roommatematch.profile.ProfileDtos.ProfileResponse;
 import mk.roommatematch.profile.ProfileDtos.ProfileSummary;
@@ -23,6 +23,7 @@ import mk.roommatematch.reference.HobbyRepository;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
@@ -33,14 +34,45 @@ public class ProfileService {
     private final ProfileRepository profiles;
     private final DormRepository dorms;
     private final HobbyRepository hobbies;
-    private final ListingRepository listings;
+    private final ImageStorage images;
 
     public ProfileService(ProfileRepository profiles, DormRepository dorms, HobbyRepository hobbies,
-                          ListingRepository listings) {
+                          ImageStorage images) {
         this.profiles = profiles;
         this.dorms = dorms;
         this.hobbies = hobbies;
-        this.listings = listings;
+        this.images = images;
+    }
+
+    /** Replaces the picture; the old file is removed so it does not stay on disk. */
+    @Transactional
+    public ProfileResponse setAvatar(Long userId, MultipartFile file) {
+        Profile profile = existing(userId);
+        String old = profile.getAvatar();
+        profile.setAvatar(images.store(file));
+        if (old != null) {
+            images.delete(old);
+        }
+        return toResponse(profile);
+    }
+
+    @Transactional
+    public ProfileResponse removeAvatar(Long userId) {
+        Profile profile = existing(userId);
+        if (profile.getAvatar() != null) {
+            images.delete(profile.getAvatar());
+            profile.setAvatar(null);
+        }
+        return toResponse(profile);
+    }
+
+    private Profile existing(Long userId) {
+        return profiles.findById(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Профилот сè уште не е пополнет."));
+    }
+
+    public static String avatarUrl(Profile profile) {
+        return profile.getAvatar() == null ? null : "/api/images/" + profile.getAvatar();
     }
 
     @Transactional(readOnly = true)
@@ -63,11 +95,6 @@ public class ProfileService {
             roomOption = dorm == null ? null : findRoomOption(dorm, request.dormRoomOptionId(), errors);
         } else {
             validateApartment(request, errors);
-        }
-        boolean stillHasPlace = request.housingType() == HousingType.APARTMENT
-                && request.situation() == Situation.HAS_PLACE;
-        if (!stillHasPlace && listings.findByResident(userId).isPresent()) {
-            errors.put("housingType", "Прво избришете го или напуштете го огласот за вашиот стан.");
         }
         Set<Hobby> chosenHobbies = new HashSet<>(hobbies.findAllById(request.hobbyIds()));
         if (chosenHobbies.size() != request.hobbyIds().size()) {
@@ -118,6 +145,25 @@ public class ProfileService {
         if (request.situation() == null) {
             errors.put("situation", "Изберете ја вашата положба.");
         }
+        // Someone who has a place gives neither: the rent and the location come from the listing.
+        if (request.situation() != Situation.HAS_PLACE) {
+            validateSearch(request, errors);
+        }
+        if (request.smoker() == null) {
+            errors.put("smoker", "Одговорете дали пушите.");
+        }
+        if (request.hasPets() == null) {
+            errors.put("hasPets", "Одговорете дали имате миленичиња.");
+        }
+        if (request.acceptsSmoker() == null) {
+            errors.put("acceptsSmoker", "Одговорете дали прифаќате цимер пушач.");
+        }
+        if (request.acceptsPets() == null) {
+            errors.put("acceptsPets", "Одговорете дали прифаќате цимер со миленичиња.");
+        }
+    }
+
+    private static void validateSearch(ProfileRequest request, Map<String, String> errors) {
         if (request.budgetMin() == null) {
             errors.put("budgetMin", "Внесете најмал буџет.");
         }
@@ -149,16 +195,21 @@ public class ProfileService {
                 p.getBudgetMax(),
                 Set.copyOf(p.getAreas()),
                 Set.copyOf(p.getPropertyTypes()),
-                p.isSmoker(),
-                p.isHasPets(),
+                inApartment(p) ? p.isSmoker() : null,
+                inApartment(p) ? p.isHasPets() : null,
                 p.getGuestsFrequency(),
-                p.getTidiness(),
+                p.getCleaning(),
                 p.getSleepSchedule(),
-                p.getQuietNeed(),
-                p.isAcceptsSmoker(),
-                p.isAcceptsPets(),
+                p.getSound(),
+                p.getCommunication(),
+                p.getSharing(),
+                p.getParties(),
+                p.getPartnerStays(),
+                inApartment(p) ? p.isAcceptsSmoker() : null,
+                inApartment(p) ? p.isAcceptsPets() : null,
                 p.getRoommateGenderPreference(),
-                p.getHobbies().stream().map(Hobby::getId).collect(Collectors.toSet()));
+                p.getHobbies().stream().map(Hobby::getId).collect(Collectors.toSet()),
+                avatarUrl(p));
     }
 
     public static ProfileSummary toSummary(Profile p) {
@@ -169,13 +220,23 @@ public class ProfileService {
                 ageOf(p.getBirthDate()),
                 p.getFaculty(),
                 p.getBio(),
-                p.isSmoker(),
-                p.isHasPets(),
+                inApartment(p) ? p.isSmoker() : null,
+                inApartment(p) ? p.isHasPets() : null,
                 p.getGuestsFrequency(),
-                p.getTidiness(),
+                p.getCleaning(),
                 p.getSleepSchedule(),
-                p.getQuietNeed(),
-                p.getHobbies().stream().map(Hobby::getName).collect(Collectors.toCollection(TreeSet::new)));
+                p.getSound(),
+                p.getCommunication(),
+                p.getSharing(),
+                p.getParties(),
+                p.getPartnerStays(),
+                p.getHobbies().stream().map(Hobby::getName).collect(Collectors.toCollection(TreeSet::new)),
+                avatarUrl(p));
+    }
+
+    /** Smoking and pets are not allowed in dorms, so for dorm residents they are not shown at all. */
+    private static boolean inApartment(Profile p) {
+        return p.getHousingType() == HousingType.APARTMENT;
     }
 
     private static int ageOf(LocalDate birthDate) {

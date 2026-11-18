@@ -3,8 +3,11 @@ package mk.roommatematch.ai;
 import com.fasterxml.jackson.databind.JsonNode;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
+import mk.roommatematch.distance.Faculty;
+import mk.roommatematch.distance.RouteClient.Mode;
 import mk.roommatematch.profile.ProfileEnums.Gender;
 import mk.roommatematch.reference.Area;
 
@@ -19,13 +22,22 @@ record MapFilters(
         Integer maxRent,
         boolean noSmokers,
         boolean noPets,
-        Gender residentGender) {
+        Gender residentGender,
+        Faculty faculty,
+        Double maxKm,
+        Integer maxMinutes,
+        Mode travelMode,
+        boolean nearest) {
 
     enum PlaceKind { APARTMENT, HOUSE, DORM }
 
     static final String SKOPJE_CODE = "SKOPJE";
+    static final String NO_FACULTY = "NONE";
+    /** Further than this is not "near" anything, so a larger number is treated as a mistake. */
+    private static final double MAX_KM = 100;
+    private static final int MAX_MINUTES = 180;
 
-    static MapFilters from(JsonNode answer, Set<String> knownDorms) {
+    static MapFilters from(JsonNode answer, Set<String> knownDorms, Map<String, Faculty> knownFaculties) {
         Set<PlaceKind> kinds = EnumSet.noneOf(PlaceKind.class);
         forEachText(answer.path("placeKinds"), value -> parse(PlaceKind.class, value, kinds));
         Set<Area> areas = EnumSet.noneOf(Area.class);
@@ -53,7 +65,25 @@ record MapFilters(
                 rent(answer.path("maxRent")),
                 answer.path("noSmokers").asBoolean(false),
                 answer.path("noPets").asBoolean(false),
-                gender(answer.path("residentGender").asText("")));
+                gender(answer.path("residentGender").asText("")),
+                knownFaculties.get(answer.path("nearFaculty").asText(NO_FACULTY)),
+                kilometres(answer.path("maxKm")),
+                minutes(answer.path("maxMinutes")),
+                "DRIVING".equals(answer.path("travelMode").asText()) ? Mode.DRIVING : Mode.WALKING,
+                answer.path("nearest").asBoolean(false));
+    }
+
+    /** A distance limit or "the closest" only means something together with a faculty. */
+    boolean measuresFromFaculty() {
+        return faculty != null && (maxKm != null || maxMinutes != null || nearest);
+    }
+
+    private static Integer minutes(JsonNode value) {
+        return value.isNumber() && value.asInt() > 0 && value.asInt() <= MAX_MINUTES ? value.asInt() : null;
+    }
+
+    private static Double kilometres(JsonNode value) {
+        return value.isNumber() && value.asDouble() > 0 && value.asDouble() <= MAX_KM ? value.asDouble() : null;
     }
 
     boolean hasLocation() {

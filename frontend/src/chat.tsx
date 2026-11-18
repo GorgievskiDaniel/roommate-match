@@ -1,6 +1,6 @@
 import { Client } from '@stomp/stompjs'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { api, getToken } from './api'
+import { api } from './api'
 import { useAuth } from './auth'
 import type { ChatMessage } from './types'
 
@@ -39,10 +39,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     const client = new Client({
       brokerURL: `${scheme}://${window.location.host}/ws`,
       reconnectDelay: 3000,
-      // Runs before each attempt, so a reconnection uses the current token.
-      beforeConnect: async (stomp) => {
-        stomp.connectHeaders = { Authorization: `Bearer ${getToken()}` }
-      },
+      // The browser sends the login cookie with the handshake, so no header is needed.
       onConnect: () => {
         client.subscribe('/user/queue/messages', (frame) => {
           const message = JSON.parse(frame.body) as ChatMessage

@@ -2,12 +2,12 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { MapContainer, Marker, TileLayer } from 'react-leaflet'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import FacultyDistance, { type Faculty } from '../components/FacultyDistance'
 import MapView, { type View } from '../components/MapView'
 import PersonCard from '../components/PersonCard'
-import { LABELS, type AreaOption, type DormDetail, type Listing, type MapBlock, type MapDorm, type MapListing, type MapSearchResult, type Reference } from '../types'
+import { LABELS, wantedRoommate, type AreaOption, type DormDetail, type Listing, type MapBlock, type MapDorm, type MapListing, type MapSearchResult, type Reference } from '../types'
 
 const MACEDONIA = { center: [41.6, 21.7] as [number, number], zoom: 8 }
 const SKOPJE: View = { center: [41.99621, 21.43189], zoom: 12 }
@@ -83,7 +83,9 @@ function ListingPanel({ id, faculty, onFaculty }: { id: number } & FacultyProps)
       <p className="price">
         {listing.monthlyRent} € месечно по цимер · {listing.freeSpots === 1 ? 'се бара 1 цимер' : `се бараат ${listing.freeSpots} цимери`}
       </p>
+      <p className="muted">Пол на цимерот: {wantedRoommate(listing.roommateGender).toLowerCase()}</p>
       <p className="description">{listing.description}</p>
+      <Link to={`/listings/${listing.id}`} className="button secondary">Отвори го огласот</Link>
       <FacultyDistance path={`/listings/${listing.id}`} selected={faculty} onSelect={onFaculty} />
       <h3>Кој живее овде</h3>
       {listing.residents.map((person) => <PersonCard key={person.userId} person={person} />)}
@@ -113,6 +115,8 @@ function DormPanel({ id, block, faculty, onFaculty }: { id: number; block?: MapB
   return (
     <>
       <h2>{dorm.name}{block ? `, ${block.name}` : ''}</h2>
+      {dorm.openingNote && <p className="opening-note">{dorm.openingNote}</p>}
+      {dorm.photoUrls.length > 0 && <img className="dorm-panel-photo" src={dorm.photoUrls[0]} alt={`${dorm.name}`} />}
       {block?.roomOption && <p className="muted">Соба: {block.roomOption}</p>}
       <FacultyDistance path={`/dorms/${dorm.id}`} selected={faculty} onSelect={onFaculty} />
       <h3>Студенти што бараат цимер</h3>
@@ -134,6 +138,9 @@ export default function MapPage() {
   const [searchParams] = useSearchParams()
   const linkedListing = Number(searchParams.get('listing')) || null
   const [selection, setSelection] = useState<Selection | null>(linkedListing ? { kind: 'listing', id: linkedListing } : null)
+  // A listing opened from its page or from a match is shown alone, so it is easy to see.
+  const [focused, setFocused] = useState(linkedListing !== null)
+  const focusedListing = focused && linkedListing !== null ? data?.listings.find((l) => l.id === linkedListing) ?? null : null
   const [place, setPlace] = useState('MACEDONIA')
   const [view, setView] = useState<View>(MACEDONIA)
   // A dorm chosen from the list moves the map away from the place picked above it.
@@ -178,13 +185,21 @@ export default function MapPage() {
   }
 
   const listingsShown = useMemo(
-    () => data?.listings.filter((l) => !search?.listingIds || search.listingIds.includes(l.id)) ?? [],
-    [data, search],
+    () => focusedListing ? [focusedListing]
+      : data?.listings.filter((l) => !search?.listingIds || search.listingIds.includes(l.id)) ?? [],
+    [data, search, focusedListing],
   )
   const dormsShown = useMemo(
-    () => data?.dorms.filter((d) => !search?.dormIds || search.dormIds.includes(d.id)) ?? [],
-    [data, search],
+    () => focusedListing ? [] : data?.dorms.filter((d) => !search?.dormIds || search.dormIds.includes(d.id)) ?? [],
+    [data, search, focusedListing],
   )
+
+  function focusOn(listing: MapListing) {
+    setFocused(true)
+    setSelection({ kind: 'listing', id: listing.id })
+    setMovedAway(true)
+    setView({ center: [listing.latitude, listing.longitude], zoom: DORM_ZOOM })
+  }
   const dormsOnMap = useMemo(
     () => dormsShown.filter((d) => d.blocks.length === 0 && d.latitude !== null && d.longitude !== null),
     [dormsShown],
@@ -198,6 +213,7 @@ export default function MapPage() {
     try {
       const result = await api<MapSearchResult>('/map/search', { method: 'POST', body: { query } })
       setSelection(null)
+      setFocused(false)
       if (!result.understood) {
         setSearch(null)
         setSearchError('Не го разбрав барањето. Напиши што бараш, на пример: стан во Карпош до 200 евра.')
@@ -311,7 +327,7 @@ export default function MapPage() {
             <span>
               {search.listingIds.length + search.dormIds.length === 0
                 ? 'Нема резултати за ова барање.'
-                : `Пронајдени: ${search.listingIds.length} огласи, ${search.dormIds.length} домови.`}
+                : `Пронајдени огласи: ${search.listingIds.length}, домови: ${search.dormIds.length}.`}
             </span>
             <ul className="tags">
               {search.filters.map((filter) => <li key={filter}>{filter}</li>)}
@@ -340,6 +356,26 @@ export default function MapPage() {
         )}
         </div>
         {error && <p role="alert" className="form-error">{error}</p>}
+        {linkedListing !== null && data?.listings.some((l) => l.id === linkedListing) && (
+          <div className="focus-bar" aria-live="polite">
+            {focusedListing ? (
+              <>
+                <span>Прикажан е само избраниот оглас.</span>
+                <button type="button" className="button secondary" onClick={() => setFocused(false)}>
+                  Прикажи ги сите огласи
+                </button>
+              </>
+            ) : (
+              <>
+                <span>Прикажани се сите огласи.</span>
+                <button type="button" className="button secondary"
+                  onClick={() => focusOn(data.listings.find((l) => l.id === linkedListing)!)}>
+                  Прикажи го само избраниот оглас
+                </button>
+              </>
+            )}
+          </div>
+        )}
         <div className="map-frame">
           <MapContainer center={MACEDONIA.center} zoom={MACEDONIA.zoom} className="map">
             <TileLayer
@@ -348,7 +384,7 @@ export default function MapPage() {
               maxZoom={BLOCKS_ZOOM}
             />
             <MapView view={view} />
-            {listingsShown.filter((l) => (l.propertyType === 'HOUSE' ? showHouses : showApartments)).map((listing) => (
+            {listingsShown.filter((l) => focusedListing || (l.propertyType === 'HOUSE' ? showHouses : showApartments)).map((listing) => (
               <Marker
                 key={`listing-${listing.id}`}
                 position={[listing.latitude, listing.longitude]}
@@ -387,7 +423,7 @@ export default function MapPage() {
             )}
           </MapContainer>
         </div>
-        {showDorms && data && (
+        {showDorms && data && !focusedListing && (
           <section className="dorm-list">
             <h2>Студентски домови (бараат цимер)</h2>
             <div className="choices">

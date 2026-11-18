@@ -32,9 +32,120 @@ class GeminiClientTest {
     private final MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
 
     private GeminiClient client(String key) {
+        return client(key, List.of());
+    }
+
+    private GeminiClient client(String key, List<String> fallbackModels) {
         return new GeminiClient(builder.build(),
-                new GeminiProperties(key, "model-x", "embed-x", "https://gemini.test/v1beta", "2026-05-20", Duration.ofSeconds(5)),
-                new ObjectMapper());
+                new GeminiProperties(key, "model-x", fallbackModels, "embed-x", "https://gemini.test/v1beta", "2026-05-20",
+                        Duration.ofSeconds(5), "low"),
+                new ObjectMapper(), Duration.ZERO);
+    }
+
+    @Test
+    void busyModelHandsOverToTheFallbackAtOnce() {
+        server.expect(requestTo("https://gemini.test/v1beta/interactions"))
+                .andExpect(jsonPath("$.model").value("model-x"))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+        server.expect(requestTo("https://gemini.test/v1beta/interactions"))
+                .andExpect(jsonPath("$.model").value("model-y"))
+                .andExpect(jsonPath("$.system_instruction").value("a"))
+                .andRespond(withSuccess(REPLY, MediaType.APPLICATION_JSON));
+
+        assertThat(client("secret", List.of("model-y")).generateText("a", "b")).contains("maxRent");
+        server.verify();
+    }
+
+    @Test
+    void afterEveryModelFailedItStartsAgainFromTheFirst() {
+        server.expect(requestTo("https://gemini.test/v1beta/interactions"))
+                .andExpect(jsonPath("$.model").value("model-x"))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+        server.expect(requestTo("https://gemini.test/v1beta/interactions"))
+                .andExpect(jsonPath("$.model").value("model-y"))
+                .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+        server.expect(requestTo("https://gemini.test/v1beta/interactions"))
+                .andExpect(jsonPath("$.model").value("model-x"))
+                .andRespond(withSuccess(REPLY, MediaType.APPLICATION_JSON));
+
+        assertThat(client("secret", List.of("model-y")).generateText("a", "b")).contains("maxRent");
+        server.verify();
+    }
+
+    @Test
+    void webSearchReadsTheAnswerItsSourcesAndTheSuggestions() {
+        server.expect(requestTo("https://gemini.test/v1beta/interactions"))
+                .andExpect(jsonPath("$.tools[0].type").value("google_search"))
+                .andExpect(jsonPath("$.store").value(false))
+                .andRespond(withSuccess("""
+                        {"steps":[
+                          {"type":"google_search_call","arguments":{"queries":["дом Пелагонија"]}},
+                          {"type":"google_search_result","result":[{"search_suggestions":"<div>чипови</div>"}]},
+                          {"type":"model_output","content":[{"type":"text","text":"Се реновира.","annotations":[
+                            {"type":"url_citation","url":"https://mon.gov.mk/a","title":"mon.gov.mk"},
+                            {"type":"url_citation","url":"https://mon.gov.mk/a","title":"mon.gov.mk"},
+                            {"type":"url_citation","url":"javascript:alert(1)","title":"лош"}]}]}
+                        ]}""", MediaType.APPLICATION_JSON));
+
+        GeminiClient.SearchAnswer answer = client("secret").searchWeb("a", "b").orElseThrow();
+
+        assertThat(answer.text()).isEqualTo("Се реновира.");
+        assertThat(answer.citations()).containsExactly(new GeminiClient.Citation("mon.gov.mk", "https://mon.gov.mk/a"));
+        assertThat(answer.searchSuggestions()).isEqualTo("<div>чипови</div>");
+        server.verify();
+    }
+
+    @Test
+    void webSearchTriesEachModelOnceWithoutWaiting() {
+        server.expect(requestTo("https://gemini.test/v1beta/interactions"))
+                .andExpect(jsonPath("$.model").value("model-x"))
+                .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+        server.expect(requestTo("https://gemini.test/v1beta/interactions"))
+                .andExpect(jsonPath("$.model").value("model-y"))
+                .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
+
+        assertThatThrownBy(() -> client("secret", List.of("model-y")).searchWeb("a", "b"))
+                .isInstanceOf(AiUnavailableException.class);
+        server.verify();
+    }
+
+    @Test
+    void webSearchWithoutTextIsEmpty() {
+        server.expect(requestTo("https://gemini.test/v1beta/interactions"))
+                .andRespond(withSuccess("{\"steps\":[]}", MediaType.APPLICATION_JSON));
+
+        assertThat(client("secret").searchWeb("a", "b")).isEmpty();
+    }
+
+    @Test
+    void badRequestDoesNotMoveToTheFallback() {
+        server.expect(org.springframework.test.web.client.ExpectedCount.once(), requestTo("https://gemini.test/v1beta/interactions"))
+                .andExpect(jsonPath("$.model").value("model-x"))
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST));
+
+        assertThatThrownBy(() -> client("secret", List.of("model-y")).generateText("a", "b"))
+                .isInstanceOf(AiUnavailableException.class);
+        server.verify();
+    }
+
+    @Test
+    void briefOverloadIsTriedAgain() {
+        server.expect(requestTo("https://gemini.test/v1beta/interactions"))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+        server.expect(requestTo("https://gemini.test/v1beta/interactions"))
+                .andRespond(withSuccess(REPLY, MediaType.APPLICATION_JSON));
+
+        assertThat(client("secret").generateText("a", "b")).contains("maxRent");
+        server.verify();
+    }
+
+    @Test
+    void badRequestIsNotTriedAgain() {
+        server.expect(org.springframework.test.web.client.ExpectedCount.once(), requestTo("https://gemini.test/v1beta/interactions"))
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST));
+
+        assertThatThrownBy(() -> client("secret").generateText("a", "b")).isInstanceOf(AiUnavailableException.class);
+        server.verify();
     }
 
     @Test
@@ -85,10 +196,32 @@ class GeminiClientTest {
 
     @Test
     void errorFromTheModelBecomesUnavailable() {
-        server.expect(requestTo("https://gemini.test/v1beta/interactions"))
+        server.expect(org.springframework.test.web.client.ExpectedCount.times(4), requestTo("https://gemini.test/v1beta/interactions"))
                 .andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS));
 
         assertThatThrownBy(() -> client("secret").generateText("a", "b")).isInstanceOf(AiUnavailableException.class);
+    }
+
+    @Test
+    void overloadIsRetriedUpToThreeTimesWithTheConfiguredThinkingLevel() {
+        server.expect(org.springframework.test.web.client.ExpectedCount.times(3), requestTo("https://gemini.test/v1beta/interactions"))
+                .andExpect(jsonPath("$.generation_config.thinking_level").value("low"))
+                .andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+        server.expect(requestTo("https://gemini.test/v1beta/interactions"))
+                .andRespond(withSuccess(REPLY, MediaType.APPLICATION_JSON));
+
+        assertThat(client("secret").generateText("a", "b")).contains("maxRent");
+        server.verify();
+    }
+
+    @Test
+    void waitDoublesUpToFourSeconds() {
+        Duration first = Duration.ofSeconds(1);
+
+        assertThat(GeminiClient.backoff(first, 1)).isEqualTo(Duration.ofSeconds(1));
+        assertThat(GeminiClient.backoff(first, 2)).isEqualTo(Duration.ofSeconds(2));
+        assertThat(GeminiClient.backoff(first, 3)).isEqualTo(Duration.ofSeconds(4));
+        assertThat(GeminiClient.backoff(first, 4)).isEqualTo(Duration.ofSeconds(4));
     }
 
     @Test

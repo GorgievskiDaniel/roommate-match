@@ -16,6 +16,7 @@ import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -51,6 +52,12 @@ public class Listing {
 
     private String description;
 
+    @ElementCollection
+    @CollectionTable(name = "listing_amenities", joinColumns = @JoinColumn(name = "listing_id"))
+    @Column(name = "amenity")
+    @Enumerated(EnumType.STRING)
+    private Set<Amenity> amenities = EnumSet.noneOf(Amenity.class);
+
     private String inviteCode;
 
     @Column(insertable = false)
@@ -63,7 +70,7 @@ public class Listing {
 
     @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)
     @JoinColumn(name = "listing_id", nullable = false)
-    @OrderBy("id")
+    @OrderBy("position, id")
     private List<ListingImage> images = new ArrayList<>();
 
     protected Listing() {
@@ -84,6 +91,10 @@ public class Listing {
         monthlyRent = request.monthlyRent();
         freeSpots = request.freeSpots().shortValue();
         description = request.description().trim();
+        amenities.clear();
+        if (request.amenities() != null) {
+            amenities.addAll(request.amenities());
+        }
         updatedAt = Instant.now();
     }
 
@@ -125,6 +136,10 @@ public class Listing {
 
     public String getDescription() {
         return description;
+    }
+
+    public Set<Amenity> getAmenities() {
+        return amenities;
     }
 
     public String getInviteCode() {
